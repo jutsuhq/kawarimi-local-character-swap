@@ -1,13 +1,17 @@
 # Releasing Kawarimi
 
-GitHub Actions is not available on the repository's account, so releases are built on a developer machine:
+GitHub Actions builds the installers (`.github/workflows/release.yml`): NSIS on Windows, AppImage and deb on Ubuntu
+24.04. A tag that matches the version in `src-tauri/tauri.conf.json` puts them, with `SHA256SUMS`, in a draft
+prerelease:
 
 ```bash
-scripts/release.sh            # Windows NSIS here (Git Bash), Linux AppImage and deb in Docker
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
-It writes `release/<version>/` with the installers and `SHA256SUMS`, and prints the `gh release create` command.
-Nothing is uploaded until that command is run.
+Check the draft's installers on clean machines (below), then publish it on GitHub. Running the workflow by hand
+(Actions › Release › Run workflow) only builds them, as the run's artifacts.
+
+`scripts/release.sh` builds the same on a developer machine (Windows here, Linux in Docker) into `release/<version>/`.
 
 ## What the installers hold
 
@@ -45,21 +49,3 @@ publishing. Note the GPU, driver and times.
 8. The result plays in Create's player and appears in Library; delete it: it lands in the recycle bin / trash.
 9. Uninstall: the app is gone; the data folder (models, jobs) stays unless removed by hand.
 10. On a machine without an NVIDIA GPU the app starts and explains why prep and render are unavailable.
-
-## Publishing on jutsuhq
-
-The repository lives at `jutsuhq/kawarimi-local-character-swap`, next to Swapjutsu, private until the first release.
-
-Description, topics and visibility (the last step makes it public):
-
-```bash
-gh repo edit jutsuhq/kawarimi-local-character-swap \
-  --description "Free open-source local AI character swap for video on Windows and Linux. Wan 2.2 Animate on your own NVIDIA GPU through ComfyUI, prep in Rust and ONNX Runtime (EdgeTAM, RT-DETRv2, BiRefNet). No cloud, no account, no per-video cost. A Viggle alternative with an MCP server. Unofficial." \
-  --add-topic character-swap,video-to-video,wan-animate,wan-2-2,comfyui,tauri,rust,onnxruntime,cuda,nvidia \
-  --add-topic local-ai,offline,edgetam,sam2,ai-video,generative-ai,mcp,windows,linux,viggle-alternative
-gh repo edit jutsuhq/kawarimi-local-character-swap --enable-wiki=false --enable-discussions
-gh repo edit jutsuhq/kawarimi-local-character-swap --visibility public --accept-visibility-change-consequences
-```
-
-Then the first release: `scripts/release.sh`, the clean-machine check above, and the printed `gh release create`
-with `--prerelease` while it is an alpha.
