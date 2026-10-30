@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-weight: 800;
+  src: url("./assets/fonts/BarlowCondensed-ExtraBold.ttf") format("truetype");
+}
+
+/* Swapjutsu's tokens (Theme.swift): dark only, flat, Comfy's plum ink with the electric yellow for everything
+   clickable. */
+@theme {
+  --color-page: #120d16;
+  --color-sidebar: #19121e;
+  --color-text: #f0efed;
+  --color-muted: rgb(240 239 237 / 0.62);
+  --color-faint: rgb(240 239 237 / 0.48);
+  --color-stroke: rgb(255 255 255 / 0.09);
+  --color-well: rgb(255 255 255 / 0.04);
+  --color-card: rgb(255 255 255 / 0.055);
+  --color-glass: rgb(255 255 255 / 0.08);
+  --color-glass-hover: rgb(255 255 255 / 0.11);
+  --color-glass-pressed: rgb(255 255 255 / 0.14);
+  --color-glass-stroke: rgb(255 255 255 / 0.2);
+  --color-selection: rgb(255 255 255 / 0.09);
+  --color-track: rgb(255 255 255 / 0.08);
+  --color-accent: #f2ff59;
+  --color-ink: #211927;
+  --color-danger: #ff3b3b;
+  --color-warning: #fabc25;
+  --color-info: #9c8cff;
+
+  --radius-small: 8px;
+  --radius-row: 10px;
+  --radius-field: 12px;
+  --radius-media: 14px;
+  --radius-card: 20px;
+
+  --font-display: "Barlow Condensed", system-ui, sans-serif;
+  --font-sans: system-ui, "Segoe UI", Inter, "Noto Sans", sans-serif;
+
+  --text-meta: 11px;
+  --text-note: 12px;
+  --text-body: 13px;
+  --text-row: 14px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-glass-stroke) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@keyframes busy {
+  from {
+    left: -33%;
+  }
+  to {
+    left: 100%;
+  }
+}

@@ -1,0 +1,35 @@
+[package]
+name = "kawarimi"
+description = "Local AI character swap for video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the lib name apart from the bin name (cargo#8519 on Windows).
+name = "kawarimi_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+kawarimi-assets.workspace = true
+kawarimi-media.workspace = true
+kawarimi-comfy.workspace = true
+kawarimi-prep.workspace = true
+kawarimi-llm.workspace = true
+edgetam-onnx.workspace = true
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+trash = "5"
+keyring = { version = "3", features = ["windows-native", "sync-secret-service", "crypto-rust"] }
+image.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

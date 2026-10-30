@@ -1,0 +1,11 @@
+[package]
+name = "kawarimi-media"
+description = "FFmpeg as a child process: probe, decode to raw frames"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

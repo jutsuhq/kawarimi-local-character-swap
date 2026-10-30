@@ -1,0 +1,22 @@
+[package]
+name = "kawarimi-mcp"
+description = "Kawarimi for AI agents: an MCP server over stdio with limits on renders and GPU time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kawarimi-assets.workspace = true
+kawarimi-media.workspace = true
+kawarimi-prep.workspace = true
+kawarimi-comfy.workspace = true
+edgetam-onnx.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+tokio.workspace = true
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true

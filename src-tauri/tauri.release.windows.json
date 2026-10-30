@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md",
+      "resources/ort/onnxruntime_providers_cuda.dll": "onnxruntime_providers_cuda.dll",
+      "resources/ort/onnxruntime_providers_shared.dll": "onnxruntime_providers_shared.dll"
+    }
+  }
+}

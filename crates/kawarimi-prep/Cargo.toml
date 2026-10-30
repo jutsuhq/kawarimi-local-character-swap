@@ -1,0 +1,16 @@
+[package]
+name = "kawarimi-prep"
+description = "Clip preparation: normalise, shots, people, tracking, identities, targets, mask video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kawarimi-assets.workspace = true
+kawarimi-media.workspace = true
+edgetam-onnx.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+ort.workspace = true

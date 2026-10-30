@@ -1,0 +1,18 @@
+{
+  "bundle": {
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/bin/libonnxruntime_providers_cuda.so": "resources/ort/libonnxruntime_providers_cuda.so",
+          "/usr/bin/libonnxruntime_providers_shared.so": "resources/ort/libonnxruntime_providers_shared.so"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/bin/libonnxruntime_providers_cuda.so": "resources/ort/libonnxruntime_providers_cuda.so",
+          "/usr/bin/libonnxruntime_providers_shared.so": "resources/ort/libonnxruntime_providers_shared.so"
+        }
+      }
+    }
+  }
+}

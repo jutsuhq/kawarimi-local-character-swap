@@ -1,0 +1,57 @@
+# ComfyUI b0b743566f65daafc423b4fea8a2fbda94b3384a (v0.39.0) requirements.txt, with PyTorch for CUDA 13.0 pinned. Compiled by
+# scripts/comfy_lock.sh into requirements-<platform>.txt (hashes included).
+torch==2.14.1+cu130
+torchvision==0.29.1+cu130
+comfyui-frontend-package==1.53.10
+comfyui-workflow-templates==0.11.76
+comfyui-embedded-docs==0.5.13
+torchsde
+numpy>=1.25.0
+einops
+transformers>=4.50.3
+tokenizers>=0.13.3
+sentencepiece
+safetensors>=0.4.2
+aiohttp>=3.11.8
+yarl>=1.18.0
+pyyaml
+Pillow
+scipy
+tqdm
+psutil
+alembic
+SQLAlchemy>=2.0.0
+filelock
+av>=17.0.0
+comfy-kitchen==0.2.37
+comfy-aimdo==0.5.5
+requests
+simpleeval>=1.0.0
+blake3
+
+#non essential dependencies:
+kornia>=0.7.1
+spandrel
+pydantic~=2.0
+pydantic-settings~=2.0
+PyOpenGL>=3.1.8
+comfy-angle
+
+# comfyui_controlnet_aux a587a4c1594524c1d2de5cd1a86cd868ff448e1c (DWPose), torch and torchvision as above
+huggingface_hub
+opencv-python
+scikit-image
+python-dateutil
+mediapipe>=0.8.0
+omegaconf
+addict
+yacs
+trimesh
+rtree
+albumentationsx
+scikit-learn
+matplotlib
+onnxruntime-gpu
+# ComfyUI-GGUF 6ea2651e7df66d7585f6ffee804b20e92fb38b8a
+gguf>=0.13.0
+protobuf
