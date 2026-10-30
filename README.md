@@ -9,7 +9,7 @@
 Replace a person in any clip with a character from one image. The camera, the moves and the timing stay; the person
 changes. Prep, prompt and render all run on your own NVIDIA GPU: no account, no cloud, no per-video cost.
 
-[![Build from source](https://img.shields.io/badge/Build%20from%20source-Windows%20%C2%B7%20Linux-F2FF59?style=for-the-badge&logo=rust&logoColor=211927&labelColor=F2FF59&color=211927)](#build-from-source)
+[![Download](https://img.shields.io/github/v/release/jutsuhq/kawarimi-local-character-swap?include_prereleases&style=for-the-badge&label=Download&labelColor=F2FF59&color=211927)](https://github.com/jutsuhq/kawarimi-local-character-swap/releases)
 
 [Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Agents](#agents) ·
 [Requirements](#requirements) · [Build](#build-from-source)
@@ -51,14 +51,16 @@ run on your own card.
 
 ## Install
 
-There is no release yet: the first prerelease is being checked on clean Windows and Linux machines. Until it is out,
-[build from source](#build-from-source). The release will hold these files, on the [Releases](https://github.com/jutsuhq/kawarimi-local-character-swap/releases) page:
+Download from [Releases](https://github.com/jutsuhq/kawarimi-local-character-swap/releases):
 
 | System | File | Install |
 |---|---|---|
-| Windows 10/11 | `…_x64-setup.exe` | Run it |
-| Ubuntu, Debian | `…_amd64.deb` | `sudo apt install ./<file>.deb` |
-| Any Linux | `…_amd64.AppImage` | `chmod +x <file>.AppImage` and run it |
+| Windows 10/11 | `Kawarimi_<version>_x64-setup.exe` | Run it |
+| Ubuntu, Debian | `Kawarimi_<version>_amd64.deb` | `sudo apt install ./Kawarimi_<version>_amd64.deb` |
+| Any Linux | `Kawarimi_<version>_amd64.AppImage` | `chmod +x Kawarimi_<version>_amd64.AppImage` and run it |
+
+The Windows installer is not code-signed yet: SmartScreen asks first (More info › Run anyway). `SHA256SUMS` in each
+release lists the files' checksums.
 
 Models are not bundled: they download from Settings when you ask for them, each pinned to an exact revision and
 checked against its SHA-256.
