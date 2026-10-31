@@ -2145,7 +2145,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "edgetam-onnx",
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-assets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2189,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-comfy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-llm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2224,7 +2224,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-media"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "kawarimi-prep"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "edgetam-onnx",
