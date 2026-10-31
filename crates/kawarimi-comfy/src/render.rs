@@ -70,6 +70,7 @@ impl Settings {
             source: uploads.source,
             mask: uploads.mask,
             character: uploads.character,
+            anchor: None,
             prompt: self.prompt.clone(),
             width,
             height,

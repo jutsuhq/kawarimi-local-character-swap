@@ -104,6 +104,114 @@ masked person in every 4th frame; the untouched source scores 0.323 against the 
 - **RAM is the limit on 32 GB.** Every run left the machine with almost no free RAM; with ~18 GB taken by other
   programs, Windows pages. Lower resolution is untested.
 
+### Grown masks (2026-10-30)
+
+Prep grows every person mask by the frame's short side / 30 (18 px at 540, 16 at 480; a square max filter in
+`write_mask`), and a frame inside a tracklet where the tracker lost the person takes the nearest frame's mask (the
+manifest counts them as `tracking.filledFrames`; `bedroom` has none). The idea is Imagination Studio's Character Swap
+(64 px at 768). The masked area doubles on `bedroom` (6.6% of the frame to 12.9%).
+
+Same clip and character as above, one 33-frame window, Q3_K_M, 4 steps, seed 0; likeness scored on the same
+ungrown mask for both:
+
+| Mask | Likeness |
+|---|---|
+| as tracked (radius 0) | 0.453 ± 0.085 |
+| grown 18 px | 0.591 ± 0.044 |
+| the source, untouched | 0.323 |
+
+With the tight mask Wan kept the girl's outline: the twin tails were cut off at the mask and the face turned away in
+some frames. With the grown one the twin tails, beret and face stay on every frame. No halo of redrawn background
+showed in any of the four frames checked (0, 12, 24, 32); the wall stripes and bed next to the grown edge match the
+source. A larger radius was not tried.
+
+### Anchor first frame (2026-10-30)
+
+Imagination Studio's Character Swap (Apache-2.0, `spark/spark_swap.py` `anchor()`) first has an image-edit model
+put the character into the clip's first frame, and the video model starts from it. Tried here with the smallest edit
+model that runs in the pinned ComfyUI's core nodes (`TextEncodeQwenImageEditPlus`, `FluxKontextMultiReferenceLatentMethod`
+`index_timestep_zero`, `CFGNorm`) plus ComfyUI-GGUF, all Apache-2.0:
+
+| File | Size |
+|---|---|
+| `unsloth/Qwen-Image-Edit-2511-GGUF` `qwen-image-edit-2511-Q3_K_M.gguf` | 9.92 GB |
+| `unsloth/Qwen2.5-VL-7B-Instruct-GGUF` `Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf` + `mmproj-F16.gguf` (renamed `Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf`: ComfyUI-GGUF finds it by the encoder's name) | 4.68 + 1.35 GB |
+| `lightx2v/Qwen-Image-Edit-2511-Lightning` `…-4steps-V1.0-bf16.safetensors` | 0.85 GB |
+| `Comfy-Org/Qwen-Image` `split_files/vae/qwen_image_vae.safetensors` | 0.25 GB |
+
+17.1 GB in all. Edit: frame 0 of `bedroom` (848×480, scaled to 1360×768, the ~1 MP the node encodes references at)
+as image 1, character 05 as image 2, Imagination Studio's prompt ("Image 1 with the person replaced by the character
+of image 2, same pose, same framing, same background; the character wears the outfit of image 2."), 4 steps, CFG 1,
+seed 0, scaled back to 848×480. The anchor goes into the first `WanAnimateToVideo` as `continue_motion` with
+`continue_motion_max_frames` 1 (the input steps by 4 from 1; 1 and 5 both take the one frame): its latent is kept,
+the pose and background still start at frame 0, and `trim_image` is 1, so the window's frame 0 is dropped and an
+`ImageBatch` puts the anchor back in front, 33 frames out. Then one 33-frame window, Q3_K_M, 4 steps, seed 0, both
+graphs on one ComfyUI with `/free` between.
+
+| Run | Sampling, 4 steps | Graph | Peak VRAM, whole GPU | Free RAM, min | Likeness (every frame) |
+|---|---|---|---|---|---|
+| Anchor edit | 18:44 (281 s/step; 4.6 GB on the GPU, 5.0 GB offloaded; the encoder 5.6 GB loaded) | 26:09 | 7.6 GB | 77 MB | |
+| Wan, no anchor | 2:24 | 10:34 | 7.5 GB | 17 MB | 0.441 |
+| Wan, anchor | 2:33 | 9:35 | 7.5 GB | 84 MB | **0.530** |
+
+(ComfyUI's own RAM was not caught: the sampler watched the venv's launcher, not the Python it starts. The free RAM
+says the same as above: 32 GB is used up.)
+
+- **The anchor holds the character.** Without it the window is a dark-haired girl in a navy dress; with it the beret,
+  the long twin tails with their blue bow, the sailor collar and pleated skirt stay to frame 32, also turned away from
+  the camera. +0.089 likeness, the largest change any setting made here.
+- **Frame 0 is the edit, not the clip.** Qwen kept the framing and background but not the exact pose (arms out where
+  the girl jumps), so frame 0 → 1 jumps; the motion is the clip's from frame 1 on. The person region of the anchor
+  differs from the source by 71.6 grey levels on average (6.0 is Imagination Studio's no-op threshold).
+- **It costs more than the render.** The edit at ~1 MP took 26 minutes on 8 GB, against 10 for a 33-frame window:
+  Qwen-Image's 20 B transformer streams from RAM at every step like Wan does. It is worth it for a final; editing at
+  the window's 848×480 instead of 1 MP is the first thing to try to cut it (not measured).
+
+In the code: the optional asset `qwen-edit` (the five files above), `data/anchor-edit.api.json`, and
+`kawarimi_comfy::anchor`: `make` takes frame 0 of `normalized.mp4` and `mask.mp4`, runs the edit, frees ComfyUI's
+models for Wan, and fails when the grey-level change inside the mask is under 6.0 (Imagination Studio's threshold for an
+edit that returned the frame unchanged); the caller then renders without an anchor. `wan::Inputs::anchor` feeds the
+result to the first window as above. Not yet asked for by a job or the UI.
+
+### Where the time goes, per node (2026-10-30)
+
+One 33-frame window, Q3_K_M, 848×480, 4 steps, seed 0, character 05, from a cold ComfyUI (`kawarimi-comfy render
+--preset draft --frames 33 --window 33 --steps 4 --short-side 480`). Node times come from ComfyUI's websocket
+(`executing` messages, `kawarimi_comfy::timing`) and are kept in `job.json` (`nodes`). A node's time includes what
+ComfyUI loads lazily for it.
+
+| Node | Class | Seconds |
+|---|---|---|
+| 102 | KSampler: loading Wan, then 4 steps (82.8 s, 20.7 s/step) | 190.9 |
+| 4 | CLIPLoaderGGUF (umt5 Q4_K_M, dequantises the token embeddings) | 57.9 |
+| 15 | DWPreprocessor, body and hands | 30.6 |
+| 5 | CLIPTextEncode, the prompt (the encoder moves to the GPU, 4.7 GB) | 24.7 |
+| 14 | DWPreprocessor, face | 15.4 |
+| 101 | WanAnimateToVideo | 12.7 |
+| 104 | VAEDecode | 7.4 |
+| | 25 other nodes | 19.3 |
+| | Graph | 358.9 (5:59) |
+
+RAM, from the watchdog (`job.json` `ram`): ComfyUI's process tree peaked at 22.3 GB; free physical RAM fell to
+31 MB; commit headroom, counting the page file's room to grow, fell to 2.0 GB, 0.5 GB above the floor at which the
+guard stops ComfyUI. The pre-check said the render would page (24 GB needed, 21.2 GB free) and let it run.
+
+Outside the 82.8 s of sampling, ~276 s are fixed costs. Three ways to cut the largest:
+
+1. **Keep the text encoder's output.** Loading umt5 and encoding take 85 s (nodes 4, 5, 6) for a prompt that
+   rarely changes. Conditioning saved per prompt text (two 512×4096 tensors, a few MB) skips the 4.7 GB encoder on
+   a repeat render: about −85 s, and 4.7 GB less to page. ComfyUI's own cache does this only while the same server
+   stays up with the same prompt.
+2. **One pose pass instead of two.** Nodes 14 and 15 run DWPose over the same 33 frames, face only and then body
+   and hands. Inference is ~0.09 s per frame (37 ms bbox, ~50 ms pose, from the log); the other ~40 s are loading
+   YOLOX and the pose model. One pass with body, hands and face, whose face crops feed `face_video`, saves about
+   −15 s per render (node 14). Computing pose in prep, which already finds the person's boxes, would remove both
+   nodes and YOLOX: about −46 s.
+3. **Load Wan once per ComfyUI, not once per render.** Of KSampler's 190.9 s, 108 s are loading and offloading
+   the 8.4 GB of weights before the first step. A ComfyUI kept warm between renders (the app keeps it; the CLI
+   starts a fresh one) skips that when RAM still holds the weights. This needs RAM to spare, which 32 GB at a 22 GB
+   peak does not have, so the saving is up to −108 s on a bigger machine and less here.
+
 ## ComfyUI on the user's machine (issues #38, #41)
 
 `kawarimi-comfy` installs ComfyUI into a folder the app owns and runs it as a child process.
@@ -162,6 +270,13 @@ masked person in every 4th frame; the untouched source scores 0.323 against the 
   - **Cancel** ends the job first, then takes its prompt off ComfyUI's queue (`/queue` delete) or interrupts it if
     it runs (`/interrupt` with its prompt id), leaving other prompts alone; the GPU lease ends with the run. A job
     being prepared stops when prep returns.
+  - **RAM** (`kawarimi_comfy::ram`). Before a job queues on a ComfyUI on this machine, the variant's RAM need
+    (Q3_K_M measured at 24 GB; the others estimated from the difference in weights) is compared with free RAM and
+    commit headroom: refused when RAM and page file together cannot hold it above the floor, a warning that it will
+    page when only physical RAM is short. The render estimate shows the same check. While ComfyUI runs, a watchdog
+    reads memory 4 times a second and stops ComfyUI's process tree when commit headroom (counting a system-managed
+    page file's room to grow) falls under 1.5 GB, and the job fails with that reason instead of restarting ComfyUI.
+    Free physical RAM is not the signal: it is near zero in every working render on 32 GB.
   - **In the app** (`src-tauri/src/jobs.rs`) one worker runs jobs oldest first under `Gpu::lease` (prep's lease for
     prep, render's from upload to finishing); at start it resumes every unfinished job. Commands `jobs_list`,
     `job_create`, `job_cancel`; each change is a `job-state` event.

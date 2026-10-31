@@ -4,12 +4,14 @@
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use kawarimi_assets::{Asset, Status, Store, manifest};
 
 use crate::install::{Install, quiet};
+use crate::ram::{self, Guard};
 use crate::variant::VARIANTS;
 
 const RENDER: &[&Asset] = &[
@@ -86,7 +88,8 @@ pub struct Server {
     child: Option<Child>,
     /// A job that kills ComfyUI's processes when the last handle closes, so they die with us if we are killed.
     #[cfg(windows)]
-    _job: Option<std::os::windows::io::OwnedHandle>,
+    _job: Option<Arc<std::os::windows::io::OwnedHandle>>,
+    guard: Arc<Guard>,
     pub port: u16,
     pub log: PathBuf,
 }
@@ -133,9 +136,22 @@ impl Server {
             cmd.process_group(0);
         }
         let child = cmd.spawn().context("starting ComfyUI")?;
+        let pid = child.id();
+        #[cfg(windows)]
+        let job = kill_on_close(&child).map(Arc::new);
+        #[cfg(windows)]
+        let rss = {
+            use std::os::windows::io::AsRawHandle;
+            // Raw handles are not Send; the job's lives as long as the Arc this closure holds.
+            let job = job.clone();
+            move || job.as_ref().map_or(0, |j| ram::job_rss(j.as_raw_handle()))
+        };
+        #[cfg(unix)]
+        let rss = move || ram::group_rss(pid);
         Ok(Self {
             #[cfg(windows)]
-            _job: kill_on_close(&child),
+            _job: job,
+            guard: ram::watch(rss, move || kill_tree(pid)),
             child: Some(child),
             port,
             log,
@@ -174,21 +190,16 @@ impl Server {
         crate::log_tail(&self.log, lines)
     }
 
+    /// The RAM watchdog of this ComfyUI ([`ram`]).
+    pub fn guard(&self) -> Arc<Guard> {
+        self.guard.clone()
+    }
+
     /// Stops ComfyUI and every process it started.
     pub fn stop(&mut self) {
+        self.guard.stop();
         let Some(mut child) = self.child.take() else { return };
-        #[cfg(windows)]
-        {
-            let mut kill = Command::new("taskkill");
-            kill.args(["/T", "/F", "/PID", &child.id().to_string()]).stdout(Stdio::null()).stderr(Stdio::null());
-            quiet(&mut kill);
-            let _ = kill.status();
-        }
-        #[cfg(unix)]
-        {
-            // The negative pid is the whole process group.
-            let _ = Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
-        }
+        kill_tree(child.id());
         let _ = child.kill();
         let _ = child.wait();
         // The venv's python.exe is a launcher; the interpreter holding the GPU exits a moment after it.
@@ -207,6 +218,22 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Kills a process and every process it started.
+fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        let mut kill = Command::new("taskkill");
+        kill.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null());
+        quiet(&mut kill);
+        let _ = kill.status();
+    }
+    #[cfg(unix)]
+    {
+        // The negative pid is the whole process group.
+        let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
     }
 }
 

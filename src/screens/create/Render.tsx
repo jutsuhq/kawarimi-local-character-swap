@@ -89,6 +89,7 @@ export function RenderStep({
           <span>{estimate.model}</span>
         </div>
       )}
+      {estimate?.ram?.message && <Note tone={estimate.ram.verdict === "short" ? "bad" : "warn"}>{estimate.ram.message}</Note>}
       <Note tone={why ? "warn" : "faint"}>
         {why ?? "Runs on this GPU through ComfyUI; prep waits while it does. It shows in Jobs, the result here and in Library."}
       </Note>

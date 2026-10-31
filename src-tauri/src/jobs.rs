@@ -185,10 +185,10 @@ impl job::Backend for Backend {
         if let Some(client) = self.own.render_client() {
             let client = client?;
             client.vram().context("your own ComfyUI does not answer")?;
-            return Ok(Api { client, output: None });
+            return Ok(Api { client, output: None, guard: None });
         }
         let url = block_on(self.comfy.ensure())?;
-        Ok(Api { client: Client::new(url)?, output: Some(self.comfy.output()?) })
+        Ok(Api { client: Client::new(url)?, output: Some(self.comfy.output()?), guard: self.comfy.guard() })
     }
 
     fn finish(&self, video: &Path, prep: &Path, out: &Path, frames: u32) -> Result<()> {

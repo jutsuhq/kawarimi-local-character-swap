@@ -252,6 +252,8 @@ export type Estimate = {
   model: string;
   seconds: number;
   vramGb: number;
+  /** This machine's RAM against the render's; null when renders go to the person's own ComfyUI. */
+  ram: { verdict: "fits" | "pages" | "short"; need: number; measured: boolean; free: number; headroom: number; message: string | null } | null;
 };
 
 export type RenderProgress = { windows: number; done: number; step: number; steps: number };

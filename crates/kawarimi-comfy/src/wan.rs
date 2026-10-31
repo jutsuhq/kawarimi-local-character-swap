@@ -31,6 +31,8 @@ pub struct Inputs {
     pub source: String,
     pub mask: String,
     pub character: String,
+    /// The uploaded anchor first frame ([`crate::anchor`]), if any: the first window starts from it.
+    pub anchor: Option<String>,
     pub prompt: String,
     pub width: u32,
     pub height: u32,
@@ -148,6 +150,15 @@ pub fn make(inputs: &Inputs) -> Result<Value> {
             .context("the Wan Animate template has no extend window")?;
     // The frames so far, and the window whose `video_frame_offset` the next one continues from.
     let (mut images, mut previous) = (json!(["105", 0]), "101".to_string());
+    if let Some(anchor) = &inputs.anchor {
+        // As kept motion its latent stays fixed; the window drops its own frame 0 (`trim_image`), so the anchor is
+        // put back in front.
+        graph.insert("30".into(), json!({ "class_type": "LoadImage", "inputs": { "image": anchor } }));
+        set(&mut graph, "101", "continue_motion", json!(["30", 0]))?;
+        set(&mut graph, "101", "continue_motion_max_frames", json!(1))?;
+        graph.insert("106".into(), json!({ "class_type": "ImageBatch", "inputs": { "image1": ["30", 0], "image2": ["105", 0] } }));
+        images = json!(["106", 0]);
+    }
     for (index, &length) in windows(inputs.frames, inputs.window).iter().enumerate() {
         let base = (index as u32 + 1) * 100;
         if index > 0 {
@@ -200,6 +211,7 @@ mod tests {
             source: "s.mp4".into(),
             mask: "m.mp4".into(),
             character: "c.png".into(),
+            anchor: None,
             prompt: String::new(),
             width: 832,
             height: 480,
@@ -276,6 +288,18 @@ mod tests {
         assert_eq!(graph["1"]["inputs"]["unet_name"], "wan.gguf");
         assert_eq!(graph["5"]["inputs"]["text"], DEFAULT_PROMPT);
         assert_eq!(graph[SAVE_NODE]["inputs"]["filename_prefix"], "kawarimi/job/render");
+    }
+
+    #[test]
+    fn an_anchor_starts_the_first_window() {
+        let graph = make(&Inputs { anchor: Some("a.png".into()), window: SHORT_WINDOW, ..inputs(60) }).unwrap();
+        assert_eq!(graph["30"]["inputs"]["image"], "a.png");
+        assert_eq!(graph["101"]["inputs"]["continue_motion"], json!(["30", 0]));
+        assert_eq!(graph["101"]["inputs"]["continue_motion_max_frames"], 1);
+        assert_eq!(graph["106"]["inputs"], json!({ "image1": ["30", 0], "image2": ["105", 0] }));
+        assert_eq!(graph["201"]["inputs"]["continue_motion"], json!(["106", 0]));
+        assert_eq!(graph["206"]["inputs"]["image1"], json!(["106", 0]));
+        assert!(make(&inputs(60)).unwrap().get("30").is_none());
     }
 
     #[test]

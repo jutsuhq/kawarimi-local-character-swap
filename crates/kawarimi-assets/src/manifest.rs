@@ -436,6 +436,34 @@ pub const LIGHTX2V: Asset = Asset {
         738_005_744, "85c4a61c30e0497aa44b91d93a893b624708461a56fe5485183b28fa07e2dfb3")],
 };
 
+/// Qwen-Image-Edit 2511 for the anchor first frame (`kawarimi_comfy::anchor`): the edit model with its 4-step
+/// Lightning LoRA, the Qwen2.5-VL encoder with its vision projector (named after the encoder, which is how
+/// ComfyUI-GGUF finds it) and the VAE, all in one folder.
+pub const QWEN_EDIT: Asset = Asset {
+    id: "qwen-edit",
+    title: "Qwen-Image-Edit 2511 Q3_K_M (anchor frame)",
+    group: Group::Render,
+    license: "Apache-2.0",
+    source: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF",
+    files: &[
+        hf_file!("unsloth/Qwen-Image-Edit-2511-GGUF", "52838251db242ddd8e8d0118de36c71006d7c397",
+            "qwen-image-edit-2511-Q3_K_M.gguf", "qwen-image-edit-2511-Q3_K_M.gguf",
+            9_920_805_472, "5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9"),
+        hf_file!("unsloth/Qwen2.5-VL-7B-Instruct-GGUF", "68bb8bc4b7df5289c143aaec0ab477a7d4051aab",
+            "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf", "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+            4_683_072_384, "d16776dcd9a28d42758c2958ed3a752aabf20a305252cd64ff2be72b4a78c503"),
+        hf_file!("unsloth/Qwen2.5-VL-7B-Instruct-GGUF", "68bb8bc4b7df5289c143aaec0ab477a7d4051aab",
+            "mmproj-F16.gguf", "Qwen2.5-VL-7B-Instruct-mmproj-F16.gguf",
+            1_354_163_040, "987dd0733033fb5dd9b124d1ca926ae865572e432384eee7618b2eec3e735e17"),
+        hf_file!("lightx2v/Qwen-Image-Edit-2511-Lightning", "107d238d68b8387e32843d0b4a2e24ceb0d3ad86",
+            "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+            849_608_296, "22226e8d05d354bb356627d428809f5afd7819399b077238a2b70a82883a904f"),
+        hf_file!("Comfy-Org/Qwen-Image", "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+            "split_files/vae/qwen_image_vae.safetensors", "qwen_image_vae.safetensors",
+            253_806_246, "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"),
+    ],
+};
+
 // llama.cpp's own CUDA 13.4 build without its cudart bundle: cuBLAS and the CUDA runtime come from `cuda-runtime`
 // (the server gets that folder on PATH / LD_LIBRARY_PATH); the driver provides libcuda and nvcudart_hybrid.
 #[cfg(windows)]
@@ -535,7 +563,7 @@ pub const QWEN35_9B: Asset = Asset {
     ],
 };
 
-pub const ALL: &[Asset] = &[FFMPEG, CUDA_RUNTIME, UV, COMFYUI, NODES_CONTROLNET_AUX, NODES_GGUF, DWPOSE, WAN_ANIMATE_Q3, WAN_ANIMATE_Q4, WAN_ANIMATE_FP8, UMT5_Q4, WAN_VAE, CLIP_VISION_H, LIGHTX2V, EDGETAM, SAM21_TINY, RTDETR, YUNET, TRANSNETV2, BIREFNET_LITE, LLAMA_SERVER, QWEN35_9B];
+pub const ALL: &[Asset] = &[FFMPEG, CUDA_RUNTIME, UV, COMFYUI, NODES_CONTROLNET_AUX, NODES_GGUF, DWPOSE, WAN_ANIMATE_Q3, WAN_ANIMATE_Q4, WAN_ANIMATE_FP8, UMT5_Q4, WAN_VAE, CLIP_VISION_H, LIGHTX2V, QWEN_EDIT, EDGETAM, SAM21_TINY, RTDETR, YUNET, TRANSNETV2, BIREFNET_LITE, LLAMA_SERVER, QWEN35_9B];
 
 pub fn find(id: &str) -> Option<&'static Asset> {
     ALL.iter().find(|a| a.id == id)

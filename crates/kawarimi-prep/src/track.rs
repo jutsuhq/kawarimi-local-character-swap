@@ -57,6 +57,20 @@ impl Tracklet {
         self.masks.binary_search_by_key(&frame, |m| m.0).ok().map(|i| &self.masks[i].1)
     }
 
+    /// The mask on `frame`, or on a frame inside the tracklet where the tracker lost the object for a while, the
+    /// nearest frame's (the earlier on a tie), with whether it was borrowed. None outside the tracklet.
+    pub fn mask_held(&self, frame: usize) -> Option<(&Bits, bool)> {
+        match self.masks.binary_search_by_key(&frame, |m| m.0) {
+            Ok(i) => Some((&self.masks[i].1, false)),
+            Err(0) => None,
+            Err(i) if i == self.masks.len() => None,
+            Err(i) => {
+                let (before, after) = (&self.masks[i - 1], &self.masks[i]);
+                Some((if frame - before.0 <= after.0 - frame { &before.1 } else { &after.1 }, true))
+            }
+        }
+    }
+
     /// Mask pixels summed over every frame: the "screen presence" targets are chosen by.
     pub fn presence(&self) -> u64 {
         self.masks.iter().map(|(_, m)| m.area as u64).sum()
@@ -75,6 +89,8 @@ pub struct TrackStats {
     pub tracked_frames: usize,
     /// Frames the tracker encoded: once each, whoever is on them.
     pub encoded_frames: usize,
+    /// Target frames whose mask was borrowed from a nearby frame because the tracker had lost the person there.
+    pub filled_frames: usize,
 }
 
 /// Every person in every shot, each as one tracklet per shot.
@@ -277,5 +293,26 @@ mod tests {
         assert_eq!(exists((3, false)), [Some(true), Some(true), None]);
         // 0 is kept: 1 never existed, so nothing covered 2.
         assert_eq!(exists((8, true)), [Some(true), Some(false), Some(true)]);
+    }
+
+    #[test]
+    fn a_lost_frame_inside_a_tracklet_takes_the_nearest_mask() {
+        // One pixel each, at the frame number modulo 8, marking which frame the mask came from.
+        let mask = |p: usize| Bits::pack(&(0..8).map(|i| u8::from(i == p % 8)).collect::<Vec<_>>(), 8);
+        let bounds = crate::people::Box2 { x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 };
+        let tracklet = Tracklet {
+            id: 0,
+            shot: 0,
+            seed: Detection { frame: 2, bounds, score: 1.0 },
+            masks: vec![(2, mask(2)), (6, mask(6)), (9, mask(9))],
+        };
+        let held = |f| tracklet.mask_held(f).map(|(m, borrowed)| (m.data[0].trailing_zeros(), borrowed));
+        assert_eq!(held(2), Some((2, false)));
+        assert_eq!(held(3), Some((2, true)));
+        assert_eq!(held(4), Some((2, true)), "a tie goes to the earlier frame");
+        assert_eq!(held(5), Some((6, true)));
+        assert_eq!(held(8), Some((1, true)));
+        assert_eq!(held(1), None);
+        assert_eq!(held(10), None, "the person left the shot");
     }
 }

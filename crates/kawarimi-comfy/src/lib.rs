@@ -6,6 +6,7 @@
 //! and user folders, via `--base-directory`) and `logs/`. The ComfyUI source and uv are assets (`comfyui`, `uv`);
 //! the custom nodes and weights are render assets that [`Extras::render`] points ComfyUI at where they are.
 
+pub mod anchor;
 pub mod check;
 mod client;
 mod install;
@@ -14,8 +15,10 @@ pub mod locks;
 pub mod nvidia;
 pub mod progress;
 pub mod prompt;
+pub mod ram;
 pub mod render;
 mod server;
+pub mod timing;
 mod variant;
 pub mod wan;
 

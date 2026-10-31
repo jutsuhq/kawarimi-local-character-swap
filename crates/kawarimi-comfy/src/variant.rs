@@ -78,6 +78,7 @@ mod tests {
             source: "s.mp4".into(),
             mask: "m.mp4".into(),
             character: "c.png".into(),
+            anchor: None,
             prompt: String::new(),
             width: 832,
             height: 480,

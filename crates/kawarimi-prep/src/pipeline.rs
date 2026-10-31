@@ -200,7 +200,7 @@ pub fn prepare(
     let mut frames = FrameCache::build(ffmpeg, &normalized, video.width, video.height, &out.join("frames.rgb"))?;
     stage("decode", t, &mut log)?;
 
-    let (tracklets, stats) = match stored {
+    let (tracklets, mut stats) = match stored {
         Some(stored) => {
             log("people and tracking: reused");
             let pixels = frames.width * frames.height;
@@ -265,7 +265,7 @@ pub fn prepare(
         .filter(|i| targets.contains(&i.id))
         .flat_map(|i| i.tracklets.iter().map(|&t| &tracklets[t]))
         .collect();
-    write_mask(ffmpeg, &mask, &video, frames.count, &target_tracklets)?;
+    stats.filled_frames = write_mask(ffmpeg, &mask, &video, frames.count, &target_tracklets)?;
     stage("mask video", t, &mut log)?;
 
     let t = Instant::now();
@@ -327,20 +327,61 @@ pub fn prepare(
     Ok(manifest)
 }
 
-/// The union of `tracklets`' masks on each of `count` frames, as the renderers' mask video.
-fn write_mask(ffmpeg: &Ffmpeg, path: &Path, video: &Probe, count: usize, tracklets: &[&Tracklet]) -> Result<()> {
+/// The person masks are grown by the frame's short side over this, so hair, hands and outfit edges the tracker's mask
+/// misses are inside the region the model redraws.
+const GROW_DIVISOR: u32 = 30;
+
+/// The union of `tracklets`' masks on each of `count` frames, grown, as the renderers' mask video. A frame inside a
+/// tracklet where the tracker lost the person takes the nearest frame's mask; returns how many frames that filled.
+fn write_mask(ffmpeg: &Ffmpeg, path: &Path, video: &Probe, count: usize, tracklets: &[&Tracklet]) -> Result<usize> {
     let mut writer = ffmpeg.mask_writer(path, video.width, video.height, video.fps)?;
     let mut plane = vec![0u8; (video.width * video.height) as usize];
+    let radius = (video.width.min(video.height) / GROW_DIVISOR) as usize;
+    let mut filled = 0;
     for f in 0..count {
         plane.fill(0);
         for tl in tracklets {
-            if let Some(m) = tl.mask_at(f) {
+            if let Some((m, borrowed)) = tl.mask_held(f) {
                 m.paint(&mut plane);
+                filled += usize::from(borrowed);
             }
         }
+        grow(&mut plane, video.width as usize, radius);
         writer.write(&plane)?;
     }
-    writer.finish()
+    writer.finish()?;
+    Ok(filled)
+}
+
+/// Sets every pixel of a `width`-wide 0/255 plane within `radius` (a square) of a set pixel, clamped at the edges: a
+/// separable max filter, rows then columns, each a sliding count of set pixels.
+fn grow(plane: &mut [u8], width: usize, radius: usize) {
+    if radius == 0 || plane.is_empty() {
+        return;
+    }
+    let height = plane.len() / width;
+    let mut line = Vec::with_capacity(width.max(height));
+    for y in 0..height {
+        grow_line(plane, y * width, 1, width, radius, &mut line);
+    }
+    for x in 0..width {
+        grow_line(plane, x, width, height, radius, &mut line);
+    }
+}
+
+fn grow_line(plane: &mut [u8], start: usize, step: usize, len: usize, radius: usize, line: &mut Vec<u8>) {
+    line.clear();
+    line.extend((0..len).map(|i| plane[start + i * step]));
+    let mut set = line[..radius.min(len)].iter().filter(|&&v| v != 0).count();
+    for i in 0..len {
+        if i + radius < len && line[i + radius] != 0 {
+            set += 1;
+        }
+        if i > radius && line[i - radius - 1] != 0 {
+            set -= 1;
+        }
+        plane[start + i * step] = if set > 0 { 255 } else { 0 };
+    }
 }
 
 /// The mask video of the tracklets with these indices (`manifest.json`'s identities list them) from a prepared
@@ -355,7 +396,7 @@ pub fn mask_of(ffmpeg: &Ffmpeg, prep: &Path, tracklets: &[usize], dest: &Path) -
         .iter()
         .map(|&i| stored.get(i).map(|s| s.restore(i, w, w * h)).with_context(|| format!("no tracklet {i}")))
         .collect::<Result<_>>()?;
-    write_mask(ffmpeg, dest, &cache.video, count, &restored.iter().collect::<Vec<_>>())
+    write_mask(ffmpeg, dest, &cache.video, count, &restored.iter().collect::<Vec<_>>()).map(drop)
 }
 
 fn close_calls(tracklets: &[Tracklet], distances: &[Vec<f32>]) -> Vec<(usize, usize, f32)> {
@@ -489,5 +530,25 @@ mod tests {
         }
         let person = |_, y: u32| y >= 60;
         assert!(sharpness(&texted, person) < sharpness(&sharp, person) / 4.0);
+    }
+
+    #[test]
+    fn a_grown_pixel_is_a_square_clamped_at_the_edges() {
+        let (w, h) = (12, 9);
+        let grown = |x: usize, y: usize, radius| {
+            let mut plane = vec![0u8; w * h];
+            plane[y * w + x] = 255;
+            grow(&mut plane, w, radius);
+            plane
+        };
+        let square = |x0: usize, y0: usize, x1: usize, y1: usize| -> Vec<u8> {
+            let inside = |i: usize| (x0..=x1).contains(&(i % w)) && (y0..=y1).contains(&(i / w));
+            (0..w * h).map(|i| if inside(i) { 255 } else { 0 }).collect()
+        };
+        assert_eq!(grown(5, 4, 2), square(3, 2, 7, 6));
+        assert_eq!(grown(1, 0, 3), square(0, 0, 4, 3));
+        assert_eq!(grown(11, 8, 2), square(9, 6, 11, 8));
+        assert_eq!(grown(5, 4, 0), square(5, 4, 5, 4));
+        assert_eq!(grown(0, 0, 20), square(0, 0, 11, 8));
     }
 }

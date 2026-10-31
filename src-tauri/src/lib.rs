@@ -22,7 +22,7 @@ use crate::jobs::Renders;
 use crate::llm::Llm;
 use crate::own_comfy::OwnComfy;
 
-struct AppState {
+pub struct AppState {
     store: Store,
     assets_dir: PathBuf,
     installing: Mutex<HashSet<&'static str>>,

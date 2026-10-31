@@ -1,13 +1,15 @@
 //! ComfyUI's HTTP API: upload inputs, queue a graph, find it and follow it, cancel it, and download what it saved.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::{Client as Http, multipart};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::timing::Listener;
 use crate::wan::SAVE_NODE;
 
 pub struct Client {
@@ -15,6 +17,9 @@ pub struct Client {
     http: Http,
     /// Sent with every prompt, so ComfyUI's history tells our prompts apart.
     client_id: String,
+    token: Option<String>,
+    /// The websocket timing this client's prompts, opened with the first queue.
+    listener: Mutex<Option<Listener>>,
 }
 
 /// A file a node saved: where `/view` finds it.
@@ -55,6 +60,8 @@ impl Client {
             base: base.into().trim_end_matches('/').to_string(),
             http: Http::builder().default_headers(headers).connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(600)).build()?,
             client_id: format!("kawarimi-{}", std::process::id()),
+            token: token.filter(|t| !t.is_empty()).map(String::from),
+            listener: Mutex::new(None),
         })
     }
 
@@ -78,6 +85,7 @@ impl Client {
 
     /// Queues a graph and returns its prompt id. A graph ComfyUI rejects fails with its node errors.
     pub fn queue(&self, graph: &Value) -> Result<String> {
+        self.listen();
         let response = self
             .http
             .post(format!("{}/prompt", self.base))
@@ -89,6 +97,23 @@ impl Client {
             bail!("ComfyUI rejected the graph ({status}): {}", rejection(&reply));
         }
         Ok(reply["prompt_id"].as_str().context("ComfyUI's reply has no prompt_id")?.to_string())
+    }
+
+    /// Opens the websocket before a prompt is queued, so its first node is seen; without it there are no timings.
+    fn listen(&self) {
+        let mut listener = self.listener.lock().unwrap();
+        if listener.is_none() {
+            match Listener::connect(&self.base, &self.client_id, self.token.as_deref()) {
+                Ok(l) => *listener = Some(l),
+                Err(e) => eprintln!("no node timings: {e:#}"),
+            }
+        }
+    }
+
+    /// Node id and seconds of a prompt this client queued, in the order the nodes ran.
+    pub fn node_times(&self, prompt: &str) -> Vec<(String, f64)> {
+        let listener = self.listener.lock().unwrap();
+        listener.as_ref().map(|l| l.timings.lock().unwrap().of(prompt, Instant::now())).unwrap_or_default()
     }
 
     /// Where the prompt is. The queue is read before the history: ComfyUI files a prompt in its history before

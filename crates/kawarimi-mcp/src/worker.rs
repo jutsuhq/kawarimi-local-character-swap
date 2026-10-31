@@ -164,7 +164,8 @@ impl job::Backend for Backend {
             *server = Some(Server::start(&install, &Extras::render(&self.store), Duration::from_secs(600))?);
         }
         let url = server.as_ref().map(Server::url).unwrap_or_default();
-        Ok(Api { client: Client::new(url)?, output: Some(install.data().join("output")) })
+        let guard = server.as_ref().map(Server::guard);
+        Ok(Api { client: Client::new(url)?, output: Some(install.data().join("output")), guard })
     }
 
     fn finish(&self, video: &Path, prep: &Path, out: &Path, frames: u32) -> Result<()> {

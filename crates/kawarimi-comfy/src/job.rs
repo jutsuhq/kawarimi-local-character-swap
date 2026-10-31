@@ -7,6 +7,7 @@
 //! video again instead of queueing a second one; it queues again, the same graph, only when ComfyUI has neither.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,7 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::client::{Client, Output, PromptState};
+use crate::ram::{self, Guard, Stats, Verdict};
 use crate::render::{self, Clip, Settings, Uploads};
+use crate::timing::NodeTime;
 use crate::wan;
 
 pub const VERSION: u32 = 1;
@@ -90,6 +93,12 @@ pub struct Job {
     /// The latest progress line.
     #[serde(default)]
     pub detail: String,
+    /// System memory while ComfyUI rendered, when it runs on this machine.
+    #[serde(default)]
+    pub ram: Option<Stats>,
+    /// Each node's time, longest first; empty when ComfyUI's websocket was not reached.
+    #[serde(default)]
+    pub nodes: Vec<NodeTime>,
 }
 
 impl Job {
@@ -190,6 +199,8 @@ impl Jobs {
             frames: None,
             output: None,
             detail: String::new(),
+            ram: None,
+            nodes: Vec::new(),
         };
         self.save(&job)?;
         Ok(job)
@@ -241,6 +252,14 @@ pub trait Comfy {
     /// Videos in ComfyUI's output folder under `prefix`, whole or not, oldest first.
     fn saved(&self, prefix: &str) -> Vec<Output>;
     fn fetch(&self, output: &Output, dest: &Path) -> Result<()>;
+    /// The RAM watchdog of a ComfyUI on this machine; none for one elsewhere.
+    fn guard(&self) -> Option<&Guard> {
+        None
+    }
+    /// Node id and seconds of a prompt queued through this ComfyUI.
+    fn node_times(&self, _prompt: &str) -> Vec<(String, f64)> {
+        Vec::new()
+    }
 }
 
 /// What a job needs besides ComfyUI.
@@ -264,6 +283,8 @@ pub trait Backend {
 pub struct Api {
     pub client: Client,
     pub output: Option<PathBuf>,
+    /// The watchdog of a ComfyUI this process started ([`crate::Server::guard`]).
+    pub guard: Option<Arc<Guard>>,
 }
 
 impl Comfy for Api {
@@ -304,6 +325,14 @@ impl Comfy for Api {
         }
         Ok(())
     }
+
+    fn guard(&self) -> Option<&Guard> {
+        self.guard.as_deref()
+    }
+
+    fn node_times(&self, prompt: &str) -> Vec<(String, f64)> {
+        self.client.node_times(prompt)
+    }
 }
 
 /// SaveVideo's files for `prefix` in an output folder: `<prefix>_<counter>_.mp4`.
@@ -342,10 +371,11 @@ impl<B: Backend> Runner<'_, B> {
         if !job.is_active() {
             return Ok(());
         }
-        if job.step == Step::Prep && !self.cancelled() {
-            if let Err(e) = self.prep(job) {
-                return self.end(job, failed(e));
-            }
+        if job.step == Step::Prep
+            && !self.cancelled()
+            && let Err(e) = self.prep(job)
+        {
+            return self.end(job, failed(e));
         }
         if self.cancelled() {
             return self.end(job, End::Cancelled);
@@ -405,6 +435,10 @@ impl<B: Backend> Runner<'_, B> {
                 return self.stop(job, &comfy);
             }
             let Err(e) = self.step(job, &comfy) else { continue };
+            // Stopped by the RAM watchdog: starting it again would run out the same way.
+            if let Some(reason) = comfy.guard().and_then(Guard::tripped) {
+                return self.end(job, End::Failed { reason });
+            }
             // A ComfyUI that still answers failed for real; one that is gone is started again and asked anew.
             let lost = job.step < Step::Finishing && comfy.vram().is_err();
             if !lost || restarts == MAX_RESTARTS {
@@ -485,6 +519,7 @@ impl<B: Backend> Runner<'_, B> {
                 graph
             }
         };
+        self.check_ram(job, comfy)?;
         for (file, name) in [(prep.join("normalized.mp4"), &source), (prep.join("mask.mp4"), &mask), (reference, &character)] {
             let stored = comfy.upload(&file, name)?;
             anyhow::ensure!(&stored == name, "ComfyUI stored {} as {stored}", file.display());
@@ -495,8 +530,27 @@ impl<B: Backend> Runner<'_, B> {
         job.submissions += 1;
         job.prompt = None;
         self.save(job)?;
+        if let Some(guard) = comfy.guard() {
+            guard.reset();
+        }
         job.prompt = Some(comfy.queue(&graph)?);
         self.to(job, Step::Queued)
+    }
+
+    /// Refuses a render that RAM and page file together cannot hold; says so when it will page.
+    fn check_ram(&self, job: &mut Job, comfy: &B::Comfy) -> Result<()> {
+        let Some(guard) = comfy.guard() else { return Ok(()) };
+        let Some(memory) = ram::Memory::read() else { return Ok(()) };
+        let fit = ram::fit(ram::need(job.spec.settings.variant(comfy.vram()?)?), memory, guard.held());
+        match (fit.verdict, fit.message) {
+            (Verdict::Short, Some(message)) => bail!(message),
+            (Verdict::Pages, Some(message)) => {
+                job.detail = message;
+                (self.changed)(job);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Follows the queued prompt until it saved its video, failed, or turned out lost.
@@ -504,6 +558,9 @@ impl<B: Backend> Runner<'_, B> {
         let Some(prompt) = job.prompt.clone() else { return self.to(job, Step::Upload) };
         let started = Instant::now();
         while !self.cancelled() {
+            if let Some(guard) = comfy.guard() {
+                job.ram = Stats::merged(job.ram, guard.stats());
+            }
             match comfy.state(&prompt)? {
                 PromptState::Pending => job.detail = "waiting in ComfyUI's queue".into(),
                 PromptState::Running => {
@@ -515,6 +572,7 @@ impl<B: Backend> Runner<'_, B> {
                 PromptState::Done(outputs) => {
                     let video = outputs.into_iter().find(|o| o.node == wan::SAVE_NODE).context("the graph saved no video")?;
                     job.output = Some(video);
+                    job.nodes = self.node_times(job, comfy, &prompt);
                     return self.to(job, Step::Downloading);
                 }
                 PromptState::Failed(error) => bail!("ComfyUI failed: {error}"),
@@ -531,6 +589,21 @@ impl<B: Backend> Runner<'_, B> {
             std::thread::sleep(self.poll);
         }
         Ok(())
+    }
+
+    /// The prompt's node times with their classes from `graph.json`, longest first.
+    fn node_times(&self, job: &Job, comfy: &B::Comfy, prompt: &str) -> Vec<NodeTime> {
+        let graph: Value = std::fs::read(self.jobs.dir(&job.id).join("graph.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        let mut nodes: Vec<NodeTime> = comfy
+            .node_times(prompt)
+            .into_iter()
+            .map(|(node, seconds)| NodeTime { class_type: graph[&node]["class_type"].as_str().unwrap_or("?").into(), node, seconds })
+            .collect();
+        nodes.sort_by(|a, b| b.seconds.total_cmp(&a.seconds));
+        nodes
     }
 
     /// Takes a whole video the graph saved before ComfyUI forgot the prompt (it was restarted), so it is not

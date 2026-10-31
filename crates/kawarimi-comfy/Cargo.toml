@@ -15,9 +15,10 @@ sha2.workspace = true
 hex.workspace = true
 image.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_JobObjects"] }
+windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_JobObjects", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile.workspace = true

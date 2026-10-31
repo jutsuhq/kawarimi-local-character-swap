@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use kawarimi_assets::Store;
+use kawarimi_comfy::ram::Guard;
 use kawarimi_comfy::{Client, Extras, Install, Server};
 use serde::Serialize;
 use tokio::sync::watch;
@@ -158,20 +159,24 @@ impl Comfy {
             }
             let Some(server) = inner.server.as_mut() else { return };
             let failed = if !server.is_running() {
-                Some(if ready { "ComfyUI stopped on its own" } else { "ComfyUI exited before it was ready" })
+                Some(match server.guard().tripped() {
+                    Some(reason) => reason,
+                    None if ready => "ComfyUI stopped on its own".into(),
+                    None => "ComfyUI exited before it was ready".into(),
+                })
             } else if !ready && server.system_stats().is_ok() {
                 ready = true;
                 self.state.send_replace(ComfyState::Ready { url: server.url() });
                 None
             } else if !ready && started.elapsed() > START_TIMEOUT {
-                Some("ComfyUI did not answer in time")
+                Some("ComfyUI did not answer in time".into())
             } else {
                 None
             };
             if let Some(error) = failed {
                 let log = server.log_tail(LOG_LINES);
                 inner.server = None;
-                self.state.send_replace(ComfyState::Failed { error: error.into(), log });
+                self.state.send_replace(ComfyState::Failed { error, log });
                 return;
             }
         }
@@ -204,6 +209,11 @@ impl Comfy {
             ComfyState::Failed { error, log } => bail!("{error}:\n{log}"),
             other => bail!("ComfyUI did not start ({other:?})"),
         }
+    }
+
+    /// The RAM watchdog of the running ComfyUI.
+    pub fn guard(&self) -> Option<Arc<Guard>> {
+        self.inner.lock().unwrap().server.as_ref().map(Server::guard)
     }
 
     /// ComfyUI's output folder, where its graphs save.

@@ -90,6 +90,7 @@ fn main() -> Result<()> {
             let mut job = jobs.create(spec)?;
             eprintln!("job {} in {}", job.id, jobs.dir(&job.id).display());
             renders()?.run(&jobs, &mut job)?;
+            report(&job);
             let result = done(&job)?;
             std::fs::copy(jobs.dir(&job.id).join("comfy.mp4"), out.with_extension("comfy.mp4"))?;
             std::fs::copy(result, &out)?;
@@ -118,6 +119,26 @@ fn main() -> Result<()> {
         _ => anyhow::bail!("usage: kawarimi-comfy install|check|render|resume|finish [--root <folder>] [--models <folder>]"),
     }
     Ok(())
+}
+
+/// The job's node times, longest first, and its RAM.
+fn report(job: &Job) {
+    if !job.nodes.is_empty() {
+        eprintln!("{:>8}  {:>5}  class", "seconds", "node");
+        for n in &job.nodes {
+            eprintln!("{:>8.1}  {:>5}  {}", n.seconds, n.node, n.class_type);
+        }
+        eprintln!("{:>8.1}  total", job.nodes.iter().map(|n| n.seconds).sum::<f64>());
+    }
+    if let Some(ram) = job.ram {
+        let gb = |b: u64| b as f64 / kawarimi_comfy::ram::GB as f64;
+        eprintln!(
+            "RAM: ComfyUI peak {:.1} GB, free RAM min {:.2} GB, commit headroom min {:.1} GB",
+            gb(ram.peak_rss),
+            gb(ram.min_free),
+            gb(ram.min_headroom)
+        );
+    }
 }
 
 fn done(job: &Job) -> Result<&Path> {
@@ -173,7 +194,8 @@ impl job::Backend for Renders<'_> {
             *server = Some(started);
         }
         let url = server.as_ref().map(Server::url).unwrap_or_default();
-        Ok(Api { client: Client::new(url)?, output: Some(self.install.data().join("output")) })
+        let guard = server.as_ref().map(Server::guard);
+        Ok(Api { client: Client::new(url)?, output: Some(self.install.data().join("output")), guard })
     }
 
     fn finish(&self, video: &Path, prep: &Path, out: &Path, frames: u32) -> Result<()> {

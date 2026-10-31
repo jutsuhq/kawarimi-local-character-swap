@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use kawarimi_assets::{Status, Store, manifest};
 use kawarimi_comfy::job::{End, Job, Source, Spec};
+use kawarimi_comfy::ram;
 use kawarimi_comfy::render::{Clip as RenderClip, Estimate, Settings};
 use kawarimi_comfy::wan::{self, Quality};
 use kawarimi_prep::fix::Fix;
@@ -402,11 +403,17 @@ impl Clips {
         Ok(Settings { quality, seed, prompt, model: None, frames: None, steps: None, short_side: None, window: None })
     }
 
-    fn estimate(&self, id: &str, quality: Quality) -> Result<Estimate> {
+    /// `held`: what the app's ComfyUI holds now; none when renders go to the person's own ComfyUI elsewhere.
+    fn estimate(&self, id: &str, quality: Quality, held: Option<u64>) -> Result<RenderEstimate> {
         let view = self.get(id)?;
         let prep = view.prep_dir.context("prep the clip first")?;
         let settings = Settings { quality, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
-        settings.estimate(&RenderClip::read(&prep)?, vram())
+        let estimate = settings.estimate(&RenderClip::read(&prep)?, vram())?;
+        let ram = match (held, ram::Memory::read()) {
+            (Some(held), Some(memory)) => Some(ram::fit(ram::need(settings.variant(vram())?), memory, held)),
+            _ => None,
+        };
+        Ok(RenderEstimate { estimate, ram })
     }
 
     /// A render of `person` as their character: the prep as this render sees it, then a job.
@@ -453,6 +460,14 @@ impl Clips {
             Ok(())
         })
     }
+}
+
+/// A render's estimate, with this machine's RAM against what the render needs; the job refuses the same way.
+#[derive(Debug, Serialize)]
+pub struct RenderEstimate {
+    #[serde(flatten)]
+    estimate: Estimate,
+    ram: Option<ram::Fit>,
 }
 
 /// The first GPU's memory in bytes; 0 without one.
@@ -737,8 +752,9 @@ pub fn clip_template(clips: Shared<'_>, id: String, person: usize) -> Result<Str
 }
 
 #[tauri::command]
-pub fn clip_estimate(clips: Shared<'_>, id: String, quality: Quality) -> Result<Estimate, String> {
-    text(clips.estimate(&id, quality))
+pub fn clip_estimate(clips: Shared<'_>, state: State<'_, crate::AppState>, id: String, quality: Quality) -> Result<RenderEstimate, String> {
+    let held = state.own_comfy.server().is_none().then(|| state.comfy.guard().map_or(0, |g| g.held()));
+    text(clips.estimate(&id, quality, held))
 }
 
 #[tauri::command]
