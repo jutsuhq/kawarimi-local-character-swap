@@ -9,6 +9,7 @@
 pub mod anchor;
 pub mod check;
 mod client;
+pub mod conditioning;
 mod install;
 pub mod job;
 pub mod locks;

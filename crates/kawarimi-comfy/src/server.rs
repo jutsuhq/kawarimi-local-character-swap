@@ -107,6 +107,9 @@ impl Server {
         anyhow::ensure!(install.is_installed(), "ComfyUI is not installed in {}", install.root.display());
         let port = free_port()?;
         let paths = install.root.join("extra_model_paths.yaml");
+        // Where the renders keep their prompts' conditionings, for `ConditioningLoader`.
+        let mut extras = extras.clone();
+        extras.folders.push(("embeddings", install.data().join("output").join(crate::conditioning::FOLDER)));
         std::fs::write(&paths, extras.yaml()?)?;
         let log = install.root.join("logs").join("server.log");
         let out = std::fs::File::create(&log)?;

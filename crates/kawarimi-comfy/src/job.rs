@@ -252,6 +252,10 @@ pub trait Comfy {
     /// Videos in ComfyUI's output folder under `prefix`, whole or not, oldest first.
     fn saved(&self, prefix: &str) -> Vec<Output>;
     fn fetch(&self, output: &Output, dest: &Path) -> Result<()>;
+    /// ComfyUI's output folder, when it is on this machine.
+    fn output(&self) -> Option<&Path> {
+        None
+    }
     /// The RAM watchdog of a ComfyUI on this machine; none for one elsewhere.
     fn guard(&self) -> Option<&Guard> {
         None
@@ -324,6 +328,10 @@ impl Comfy for Api {
             self.client.download(output, dest)?;
         }
         Ok(())
+    }
+
+    fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
     }
 
     fn guard(&self) -> Option<&Guard> {
@@ -509,7 +517,10 @@ impl<B: Backend> Runner<'_, B> {
                 let vram = comfy.vram()?;
                 let model = job.spec.settings.variant(vram)?;
                 let uploads = Uploads { source: source.clone(), mask: mask.clone(), character: character.clone() };
-                let inputs = job.spec.settings.inputs(&clip, vram, model, uploads, &job.prefix());
+                let inputs = wan::Inputs {
+                    output: comfy.output().map(Path::to_path_buf),
+                    ..job.spec.settings.inputs(&clip, vram, model, uploads, &job.prefix())
+                };
                 let image = image::open(&job.spec.character).with_context(|| format!("reading {}", job.spec.character.display()))?;
                 atomically(&reference, |part| Ok(wan::reference(&image, inputs.width, inputs.height).save(part)?))?;
                 let graph = render::graph(&inputs, model)?;

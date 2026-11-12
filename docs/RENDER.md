@@ -212,6 +212,26 @@ Outside the 82.8 s of sampling, ~276 s are fixed costs. Three ways to cut the la
    starts a fresh one) skips that when RAM still holds the weights. This needs RAM to spare, which 32 GB at a 22 GB
    peak does not have, so the saving is up to −108 s on a bigger machine and less here.
 
+### Kept text-encoder output (2026-11-13)
+
+`kawarimi_comfy::conditioning`: a render saves each prompt's conditioning with ComfyUI's `SaveConditioning` into
+`output/kawarimi/conditioning`, named after a hash of the encoder and the text; a later render with the same pair
+loads it with `ConditioningLoader` and leaves umt5 out of the graph. Only for a ComfyUI started by Kawarimi, whose
+output folder it can look in. Same draft as above (Tokyo Walk, Madame X, seed 0), RTX 3070, 32 GB with other
+programs open, each run a fresh ComfyUI:
+
+| Run | Graph | KSampler | umt5 (nodes 4, 5, 6) | RAM peak |
+|---|---|---|---|---|
+| main, cold file cache | 457.7 | 271.1 | 84.8 | 23.1 GB |
+| this change, first render: encodes and saves | 376.0 | 226.5 | 69.0 | 23.5 GB |
+| this change, repeat render: loads | 160.9 | 83.6 | 0 | 24.1 GB |
+| main, run straight after, warm file cache | 305.2 | 162.1 | 70.9 | 25.5 GB |
+
+The repeat render's frames are identical to main's, bit for bit. Against main on an equally warm file cache it is
+144 s faster: 71 s of umt5, and 78 s less in KSampler, whose loading no longer competes with the 4.7 GB encoder for
+RAM. The runs vary by tens of seconds with what else the machine is doing, so the KSampler part is the less certain
+one. The saving needs the prompt text unchanged; the first render of a new text costs what it did.
+
 ## ComfyUI on the user's machine (issues #38, #41)
 
 `kawarimi-comfy` installs ComfyUI into a folder the app owns and runs it as a child process.

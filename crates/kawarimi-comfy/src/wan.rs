@@ -5,8 +5,12 @@
 //! It holds the first window (nodes 101–105) and one extend window (201–206); [`make`] drops the extend for a short
 //! clip and repeats it, renumbered, for a long one.
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
+
+use crate::conditioning::Text;
 
 const TEMPLATE: &str = include_str!("../data/wan-animate.api.json");
 
@@ -45,6 +49,9 @@ pub struct Inputs {
     pub window: u32,
     pub diffusion_model: String,
     pub text_encoder: String,
+    /// ComfyUI's output folder, when it is on this machine: the prompts' conditionings are kept there and loaded
+    /// instead of encoded when they are ([`crate::conditioning`]).
+    pub output: Option<PathBuf>,
     /// Where in ComfyUI's output folder the video is saved (`SaveVideo.filename_prefix`), e.g. `kawarimi/<job>/render`.
     pub prefix: String,
 }
@@ -133,6 +140,26 @@ pub fn make(inputs: &Inputs) -> Result<Value> {
     set(&mut graph, "4", "clip_name", json!(inputs.text_encoder))?;
     let prompt = inputs.prompt.trim();
     set(&mut graph, "5", "text", json!(if prompt.is_empty() { DEFAULT_PROMPT } else { prompt }))?;
+    if let Some(output) = &inputs.output {
+        let mut encodes = false;
+        // The prompt (5) and the negative prompt (6), each saved by the node next to it or loaded in its place.
+        for (node, save) in [("5", "25"), ("6", "26")] {
+            let text = graph[node]["inputs"]["text"].as_str().context("the Wan Animate template has no prompt text")?;
+            match Text::plan(output, &inputs.text_encoder, text) {
+                Text::Load(file) => {
+                    graph.insert(node.into(), json!({ "class_type": "ConditioningLoader", "inputs": { "conditioning_name": file } }));
+                }
+                Text::Save(prefix) => {
+                    let inputs = json!({ "conditioning": [node, 0], "filename_prefix": prefix });
+                    graph.insert(save.into(), json!({ "class_type": "SaveConditioning", "inputs": inputs }));
+                    encodes = true;
+                }
+            }
+        }
+        if !encodes {
+            graph.remove("4");
+        }
+    }
     set(&mut graph, "9", "image", json!(inputs.character))?;
     set(&mut graph, "11", "file", json!(inputs.source))?;
     set(&mut graph, "16", "file", json!(inputs.mask))?;
@@ -221,6 +248,7 @@ mod tests {
             window: WINDOW,
             diffusion_model: "wan.gguf".into(),
             text_encoder: "umt5.gguf".into(),
+            output: None,
             prefix: "kawarimi/job/render".into(),
         }
     }
@@ -300,6 +328,31 @@ mod tests {
         assert_eq!(graph["201"]["inputs"]["continue_motion"], json!(["106", 0]));
         assert_eq!(graph["206"]["inputs"]["image1"], json!(["106", 0]));
         assert!(make(&inputs(60)).unwrap().get("30").is_none());
+    }
+
+    #[test]
+    fn kept_prompts_are_loaded_instead_of_encoded() {
+        let output = tempfile::tempdir().unwrap();
+        let first = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(first["25"]["class_type"], "SaveConditioning");
+        assert_eq!(first["25"]["inputs"]["conditioning"], json!(["5", 0]));
+        assert_eq!(first["26"]["inputs"]["conditioning"], json!(["6", 0]));
+        assert_eq!(first["5"]["class_type"], "CLIPTextEncode");
+        // What SaveConditioning writes for the negative prompt.
+        let prefix = first["26"]["inputs"]["filename_prefix"].as_str().unwrap();
+        std::fs::create_dir_all(output.path().join(crate::conditioning::FOLDER)).unwrap();
+        std::fs::write(output.path().join(format!("{prefix}_00001_.safetensors")), b"").unwrap();
+        let second = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(second["6"]["class_type"], "ConditioningLoader");
+        assert!(second.get("26").is_none());
+        assert_eq!((second["5"]["class_type"].as_str(), second.get("25").is_some(), second.get("4").is_some()), (Some("CLIPTextEncode"), true, true));
+        let prefix = first["25"]["inputs"]["filename_prefix"].as_str().unwrap();
+        std::fs::write(output.path().join(format!("{prefix}_00001_.safetensors")), b"").unwrap();
+        let third = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(third["5"]["class_type"], "ConditioningLoader");
+        assert!(third.get("4").is_none(), "nothing left to encode");
+        assert_eq!(third["101"]["inputs"]["positive"], json!(["5", 0]));
+        assert!(make(&inputs(33)).unwrap().get("25").is_none());
     }
 
     #[test]

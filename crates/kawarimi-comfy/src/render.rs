@@ -80,6 +80,7 @@ impl Settings {
             window: self.window.unwrap_or(preset.window),
             diffusion_model: model.file().into(),
             text_encoder: manifest::UMT5_Q4.files[0].path.into(),
+            output: None,
             prefix: prefix.into(),
         }
     }
