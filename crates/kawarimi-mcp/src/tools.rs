@@ -460,6 +460,7 @@ fn settings(args: &Value) -> Result<Settings> {
         steps: None,
         short_side: None,
         window: None,
+        anchor: false,
     })
 }
 

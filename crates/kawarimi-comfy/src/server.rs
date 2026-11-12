@@ -52,7 +52,9 @@ impl Extras {
         ];
         let wan = VARIANTS.iter().filter(|v| store.status(v.asset) == Status::Installed);
         folders.extend(wan.map(|v| ("diffusion_models", dir(v.asset))));
-        Self { folders, env: vec![("AUX_ANNOTATOR_CKPTS_PATH", dir(&manifest::DWPOSE))], args: vec![] }
+        let mut extras = Self { folders, env: vec![("AUX_ANNOTATOR_CKPTS_PATH", dir(&manifest::DWPOSE))], args: vec![] };
+        crate::anchor::extras(&mut extras, store);
+        extras
     }
 
     /// The render assets besides the Wan weights, which each render picks.

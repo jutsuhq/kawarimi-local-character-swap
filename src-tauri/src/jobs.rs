@@ -200,6 +200,10 @@ impl job::Backend for Backend {
         let probe = self.ffmpeg()?.probe(video)?;
         Ok((probe.duration * probe.fps).round() as u32)
     }
+
+    fn first_frame(&self, video: &Path, width: u32, height: u32) -> Result<image::RgbImage> {
+        kawarimi_comfy::anchor::first_frame(&self.ffmpeg()?, video, width, height)
+    }
 }
 
 #[cfg(test)]
@@ -217,7 +221,7 @@ mod tests {
         std::fs::write(&clip, b"clip").unwrap();
         std::fs::write(&character, b"png").unwrap();
         let jobs = Jobs::new(dir.path().join("jobs"));
-        let settings = Settings { quality: wan::Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let settings = Settings { quality: wan::Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let spec = Spec { source: Source::Clip { path: clip, start: 0.0, duration: None, targets: None }, character, settings };
         let mut job = jobs.create(spec).unwrap();
         assert!(to_trash(&jobs, &job.id).is_err(), "a running job stays");
@@ -255,7 +259,7 @@ mod tests {
             }
         });
         if !renders.list().iter().any(Job::is_active) {
-            let settings = Settings { quality: wan::Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+            let settings = Settings { quality: wan::Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
             let spec = Spec { source: Source::Prepared { folder: var("KAWARIMI_PREP") }, character: var("KAWARIMI_CHARACTER"), settings };
             renders.create(spec).unwrap();
         }

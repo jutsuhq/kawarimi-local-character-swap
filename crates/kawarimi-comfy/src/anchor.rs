@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use image::{GrayImage, RgbImage};
-use kawarimi_assets::{Status, Store, manifest};
+use kawarimi_assets::{Store, manifest};
 use kawarimi_media::Ffmpeg;
 use serde_json::{Value, json};
 
+use crate::job::{Comfy, atomically};
 use crate::wan::Inputs;
-use crate::{Client, Extras, PromptState};
+use crate::{Extras, PromptState};
 
 const TEMPLATE: &str = include_str!("../data/anchor-edit.api.json");
 /// The node whose output is the anchor.
@@ -23,12 +24,11 @@ pub const MIN_CHANGE: f32 = 6.0;
 /// The pixel count Qwen-Image-Edit encodes its reference images at (`TextEncodeQwenImageEditPlus`).
 const EDIT_PIXELS: f64 = 1024.0 * 1024.0;
 
-/// Points ComfyUI at the edit model's folder, if it is installed.
+/// Points ComfyUI at the edit model's folder, installed or not yet: the models are found once they are there, without
+/// starting ComfyUI again.
 pub fn extras(extras: &mut Extras, store: &Store) {
-    if store.status(&manifest::QWEN_EDIT) == Status::Installed {
-        let dir = store.dir(&manifest::QWEN_EDIT);
-        extras.folders.extend(["diffusion_models", "text_encoders", "vae", "loras"].map(|kind| (kind, dir.clone())));
-    }
+    let dir = store.dir(&manifest::QWEN_EDIT);
+    extras.folders.extend(["diffusion_models", "text_encoders", "vae", "loras"].map(|kind| (kind, dir.clone())));
 }
 
 /// The edit graph: `frame` (uploaded, `width`×`height`) edited at ~1 MP with `character` in it, saved under `prefix`
@@ -64,41 +64,59 @@ pub fn change(frame: &RgbImage, anchor: &RgbImage, mask: &GrayImage) -> Option<f
     (count > 0).then(|| sum / count as f32)
 }
 
-/// Makes the anchor for the render `inputs` of a prepared clip and uploads it; its name goes into `inputs.anchor`.
-/// `reference` is the character as Wan gets it (`wan::reference`). Every file goes into `dir`; ComfyUI's models are
-/// freed after, for Wan. Fails when the edit fails or changed nothing; the render then goes on without an anchor.
-pub fn make(client: &Client, ffmpeg: &Ffmpeg, prep: &Path, reference: &Path, dir: &Path, inputs: &Inputs) -> Result<String> {
+/// Makes the anchor for the render `inputs` into `anchor` (a PNG): `frame` and `mask` are frame 0 of prep's
+/// `normalized.mp4` and `mask.mp4` at the render size, `reference` the character as Wan gets it (`wan::reference`).
+/// ComfyUI's models are freed after, for Wan. Fails when the edit fails or changed nothing; the render then goes on
+/// without an anchor. Stops, taking the edit off ComfyUI, once `cancelled` says so.
+pub fn make(
+    comfy: &impl Comfy,
+    frame: &RgbImage,
+    mask: &GrayImage,
+    reference: &Path,
+    anchor: &Path,
+    inputs: &Inputs,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<()> {
     let (width, height, prefix) = (inputs.width, inputs.height, format!("{}-anchor", inputs.prefix));
-    let first = |video: &Path| -> Result<Vec<u8>> {
-        ffmpeg.frames(video, width, height, None)?.next().context("the video has no frames")?
-    };
-    let frame = RgbImage::from_raw(width, height, first(&prep.join("normalized.mp4"))?).context("short frame")?;
-    let mask = RgbImage::from_raw(width, height, first(&prep.join("mask.mp4"))?).context("short mask frame")?;
+    let dir = anchor.parent().context("the anchor's folder")?;
     let frame_file = dir.join("anchor-frame.png");
     frame.save(&frame_file)?;
-    let upload = |file: &Path, what: &str| client.upload(file, &format!("{}-{what}", prefix.replace('/', "-")));
+    let upload = |file: &Path, what: &str| comfy.upload(file, &format!("{}-{what}", prefix.replace('/', "-")));
     let graph = graph(&upload(&frame_file, "frame.png")?, &upload(reference, "character.png")?, width, height, inputs.seed, &prefix)?;
-    let edited = run(client, &graph, &dir.join("anchor.png"));
-    client.free()?;
-    let edited = edited?;
-    let anchor = image::open(&edited)?.to_rgb8();
-    anyhow::ensure!(anchor.dimensions() == (width, height), "the anchor is {:?}, not {width}×{height}", anchor.dimensions());
-    let change = change(&frame, &anchor, &image::DynamicImage::ImageRgb8(mask).to_luma8());
-    match change {
-        Some(change) if change >= MIN_CHANGE => upload(&edited, "anchor.png"),
-        Some(change) => bail!("the edit left the person as it was (grey-level change {change:.1})"),
-        None => bail!("frame 0 has no person"),
-    }
+    let edited = atomically(anchor, |part| {
+        let edited = run(comfy, &graph, part, cancelled);
+        comfy.free()?;
+        edited?;
+        let edited = image::open(part)?.to_rgb8();
+        anyhow::ensure!(edited.dimensions() == (width, height), "the anchor is {:?}, not {width}×{height}", edited.dimensions());
+        match change(frame, &edited, mask) {
+            Some(change) if change >= MIN_CHANGE => Ok(()),
+            Some(change) => bail!("the edit left the person as it was (grey-level change {change:.1})"),
+            None => bail!("frame 0 has no person"),
+        }
+    });
+    let _ = std::fs::remove_file(&frame_file);
+    edited
 }
 
-fn run(client: &Client, graph: &Value, dest: &Path) -> Result<std::path::PathBuf> {
-    let prompt = client.queue(graph)?;
+/// A video's first frame at `width`×`height`, for [`make`].
+pub fn first_frame(ffmpeg: &Ffmpeg, video: &Path, width: u32, height: u32) -> Result<RgbImage> {
+    let rgb = ffmpeg.frames(video, width, height, None)?.next().context("the video has no frames")??;
+    RgbImage::from_raw(width, height, rgb).context("a short frame")
+}
+
+fn run(comfy: &impl Comfy, graph: &Value, dest: &Path, cancelled: &dyn Fn() -> bool) -> Result<()> {
+    let prompt = comfy.queue(graph)?;
     loop {
-        match client.state(&prompt)? {
+        if cancelled() {
+            let _ = comfy.cancel(&prompt);
+            bail!("cancelled");
+        }
+        match comfy.state(&prompt)? {
             PromptState::Pending | PromptState::Running => std::thread::sleep(Duration::from_secs(1)),
             PromptState::Done(outputs) => {
                 let image = outputs.into_iter().find(|o| o.node == SAVE_NODE).context("the edit saved no image")?;
-                return client.download(&image, dest);
+                return comfy.fetch(&image, dest);
             }
             PromptState::Failed(error) => bail!("the edit failed: {error}"),
             PromptState::Unknown => bail!("ComfyUI lost the edit"),

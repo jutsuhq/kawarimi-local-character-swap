@@ -139,7 +139,7 @@ mod tests {
         write(&clip, 10);
         write(&character, 20);
         let jobs = Jobs::new(root.join("jobs"));
-        let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let spec = Spec { source: Source::Clip { path: clip, start: 0.0, duration: None, targets: None }, character, settings };
         let mut made = Vec::new();
         for end in ["done", "failed", "running"] {

@@ -5,6 +5,7 @@
 //!     kawarimi-comfy render  --prep <folder> --character <png> --out <mp4> [--jobs .cache/jobs]
 //!                            [--preset draft|final] [--frames N] [--steps N] [--short-side N] [--window N]
 //!                            [--seed 0] [--prompt <text>] [--model wan-animate-q3km|q4km|fp8, by default from the VRAM] [--comfy-args "<ComfyUI flags>"]
+//!                            [--anchor]   first frame from Qwen-Image-Edit (kawarimi-fetch qwen-edit)
 //!     kawarimi-comfy resume  [--jobs .cache/jobs]     runs every unfinished job, oldest first
 //!     kawarimi-comfy finish  --prep <folder> --video <ComfyUI's mp4> --out <mp4> [--frames N]
 //!
@@ -80,7 +81,12 @@ fn main() -> Result<()> {
                 steps: number("--steps")?,
                 short_side: number("--short-side")?,
                 window: number("--window")?,
+                anchor: args.iter().any(|a| a == "--anchor"),
             };
+            if settings.anchor {
+                let asset = &manifest::QWEN_EDIT;
+                anyhow::ensure!(store.status(asset) == Status::Installed, "{} is not installed (kawarimi-fetch {})", asset.title, asset.id);
+            }
             let spec = Spec {
                 source: Source::Prepared { folder: std::path::absolute(required("--prep", "folder")?)? },
                 character: required("--character", "png")?,
@@ -205,6 +211,10 @@ impl job::Backend for Renders<'_> {
     fn frames(&self, video: &Path) -> Result<u32> {
         let probe = self.ffmpeg.probe(video)?;
         Ok((probe.duration * probe.fps).round() as u32)
+    }
+
+    fn first_frame(&self, video: &Path, width: u32, height: u32) -> Result<image::RgbImage> {
+        kawarimi_comfy::anchor::first_frame(&self.ffmpeg, video, width, height)
     }
 }
 

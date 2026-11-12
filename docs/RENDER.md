@@ -171,7 +171,23 @@ In the code: the optional asset `qwen-edit` (the five files above), `data/anchor
 `kawarimi_comfy::anchor`: `make` takes frame 0 of `normalized.mp4` and `mask.mp4`, runs the edit, frees ComfyUI's
 models for Wan, and fails when the grey-level change inside the mask is under 6.0 (Imagination Studio's threshold for an
 edit that returned the frame unchanged); the caller then renders without an anchor. `wan::Inputs::anchor` feeds the
-result to the first window as above. Not yet asked for by a job or the UI.
+result to the first window as above.
+
+In the app (2026-11-13): a switch under the Render step, off by default, which offers the 17 GB download the first
+time; the CLI takes `--anchor`. A job that asked for the anchor and could not make it renders without one and says
+why (`anchorSkipped`). A/B on the Tokyo Walk draft with Madame X (seed 0, conditioning loaded, one pose pass), each
+on a fresh ComfyUI:
+
+| Run | Anchor edit | Graph | Likeness (every 4th frame) |
+|---|---|---|---|
+| no anchor | | 116.1 s | 0.492 ± 0.024 |
+| anchor | 124 s (4 steps, no paging) | 220.3 s | 0.311 ± 0.011 |
+
+Here the anchor made it worse. Qwen re-framed the first frame closer but kept the clip's own woman, her leather coat,
+red dress and sunglasses, and Wan followed her for all 33 frames. The grey-level change inside the mask was 16.7,
+above `MIN_CHANGE`, because the framing moved, so the check took the edit for a swap. So the switch stays off by
+default and says it can fail; the bedroom A/B above is the case where it helps. The edit took 2 minutes, not 26:
+nothing else held RAM this time, where on 2026-10-30 free RAM was down to 77 MB and every step paged.
 
 ### Where the time goes, per node (2026-10-30)
 

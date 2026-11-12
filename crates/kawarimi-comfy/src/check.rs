@@ -30,7 +30,7 @@ impl Check {
 
 /// Checks the graph a draft on a card with `vram` bytes makes against a server's `/object_info`.
 pub fn evaluate(object_info: &Value, vram: u64) -> Result<Check> {
-    let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+    let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
     let variant = settings.variant(vram)?;
     let clip = Clip { width: 832, height: 480, frames: 33 };
     let uploads = Uploads { source: "source.mp4".into(), mask: "mask.mp4".into(), character: "character.png".into() };
@@ -84,7 +84,7 @@ mod tests {
         for class in &check.missing_nodes {
             info.insert(class.clone(), json!({ "input": { "required": {} } }));
         }
-        let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let settings = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let variant = settings.variant(vram).unwrap();
         let uploads = Uploads { source: "s".into(), mask: "m".into(), character: "c".into() };
         let graph = render::graph(&settings.inputs(&Clip { width: 832, height: 480, frames: 33 }, vram, variant, uploads, "p"), variant).unwrap();
