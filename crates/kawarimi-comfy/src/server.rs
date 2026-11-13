@@ -111,6 +111,9 @@ impl Server {
         let mut extras = extras.clone();
         extras.folders.push(("embeddings", install.data().join("output").join(crate::conditioning::FOLDER)));
         std::fs::write(&paths, extras.yaml()?)?;
+        let nodes = install.data().join("custom_nodes");
+        std::fs::create_dir_all(&nodes)?;
+        std::fs::write(nodes.join("kawarimi_pose.py"), crate::wan::POSE_NODE)?;
         let log = install.root.join("logs").join("server.log");
         let out = std::fs::File::create(&log)?;
         let err = out.try_clone()?;

@@ -18,6 +18,9 @@ const TEMPLATE: &str = include_str!("../data/wan-animate.api.json");
 pub const FPS: u32 = 16;
 /// Frames per window (`WanAnimateToVideo.length`, 4k + 1).
 pub const WINDOW: u32 = 77;
+/// The custom node that poses each frame once ([`make`] uses it on a ComfyUI Kawarimi started).
+pub const POSE_NODE: &str = include_str!("../data/kawarimi_pose.py");
+
 /// The window for cards under [`LARGE_CARD`]: on 8 GB it puts 2.7 GB of Wan on the GPU, where 77 frames leave none
 /// (docs/RENDER.md).
 pub const SHORT_WINDOW: u32 = 33;
@@ -170,6 +173,25 @@ pub fn make(inputs: &Inputs) -> Result<Value> {
     // What the template's Pixel Perfect Resolution works out for frames already at the render size.
     for node in ["14", "15"] {
         set(&mut graph, node, "resolution", json!(inputs.width.min(inputs.height)))?;
+    }
+    // Only the frames rendered go through pose and masking: a draft of a long clip used to pose all of it.
+    for (node, video) in [("27", "12"), ("28", "17")] {
+        graph.insert(node.into(), json!({ "class_type": "ImageFromBatch", "inputs": { "image": [video, 0], "batch_index": 0, "length": inputs.frames.max(1) } }));
+    }
+    set(&mut graph, "13", "image", json!(["27", 0]))?;
+    set(&mut graph, "18", "image", json!(["28", 0]))?;
+    if inputs.output.is_some() {
+        // A ComfyUI Kawarimi started has its pose node (`POSE_NODE`): one detection per frame for both pose videos.
+        let resolution = graph["14"]["inputs"]["resolution"].clone();
+        graph.insert("14".into(), json!({ "class_type": "KawarimiPose", "inputs": { "image": ["13", 0], "resolution": resolution } }));
+        graph.remove("15");
+        for node in graph.values_mut() {
+            for value in node["inputs"].as_object_mut().into_iter().flat_map(|i| i.values_mut()) {
+                if *value == json!(["15", 0]) {
+                    *value = json!(["14", 1]);
+                }
+            }
+        }
     }
 
     let extend: Vec<(u32, Value)> =
@@ -353,6 +375,23 @@ mod tests {
         assert!(third.get("4").is_none(), "nothing left to encode");
         assert_eq!(third["101"]["inputs"]["positive"], json!(["5", 0]));
         assert!(make(&inputs(33)).unwrap().get("25").is_none());
+    }
+
+    #[test]
+    fn only_the_rendered_frames_are_posed_once() {
+        let own = make(&inputs(150)).unwrap();
+        assert_eq!(own["27"]["inputs"], json!({ "image": ["12", 0], "batch_index": 0, "length": 150 }));
+        assert_eq!(own["13"]["inputs"]["image"], json!(["27", 0]));
+        assert_eq!(own["18"]["inputs"]["image"], json!(["28", 0]));
+        assert_eq!((own["14"]["class_type"].as_str(), own["15"]["class_type"].as_str()), (Some("DWPreprocessor"), Some("DWPreprocessor")));
+        let output = tempfile::tempdir().unwrap();
+        let ours = make(&Inputs { output: Some(output.path().into()), ..inputs(150) }).unwrap();
+        assert_eq!(ours["14"]["class_type"], "KawarimiPose");
+        assert!(ours.get("15").is_none());
+        for window in ["101", "201", "301"] {
+            assert_eq!(ours[window]["inputs"]["face_video"], json!(["14", 0]));
+            assert_eq!(ours[window]["inputs"]["pose_video"], json!(["14", 1]));
+        }
     }
 
     #[test]

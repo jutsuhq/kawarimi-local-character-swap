@@ -232,6 +232,23 @@ The repeat render's frames are identical to main's, bit for bit. Against main on
 RAM. The runs vary by tens of seconds with what else the machine is doing, so the KSampler part is the less certain
 one. The saving needs the prompt text unchanged; the first render of a new text costs what it did.
 
+### One pose pass, over the rendered frames only (2026-11-13)
+
+ComfyUI's log showed the draft posing all 96 frames of the 6-second prep twice, face only and then body and hands,
+192 detections at ~0.17 s each in the Tokyo crowd, for 33 rendered frames. The graph now cuts the source and the mask
+video to the frames rendered (`ImageFromBatch`), and on a ComfyUI Kawarimi starts, one node, `KawarimiPose`
+(`data/kawarimi_pose.py`, written into ComfyUI's `custom_nodes`), runs DWPreprocessor's two passes with the
+detection of the second handed back from the first. On the person's own ComfyUI the graph keeps the two
+DWPreprocessor nodes. Same draft, conditioning loaded, fresh ComfyUI each:
+
+| Run | Graph | Pose (nodes 14, 15) | RAM peak |
+|---|---|---|---|
+| before | 160.9 | 43.3 (18.4 + 24.9) | 24.1 GB |
+| after | 116.1 | 13.4 | 22.7 GB |
+
+Frames identical to before, bit for bit. A final renders every frame, so there only the second detection goes:
+about 0.17 s a frame in a crowd, less with fewer people.
+
 ## ComfyUI on the user's machine (issues #38, #41)
 
 `kawarimi-comfy` installs ComfyUI into a folder the app owns and runs it as a child process.
