@@ -171,7 +171,23 @@ In the code: the optional asset `qwen-edit` (the five files above), `data/anchor
 `kawarimi_comfy::anchor`: `make` takes frame 0 of `normalized.mp4` and `mask.mp4`, runs the edit, frees ComfyUI's
 models for Wan, and fails when the grey-level change inside the mask is under 6.0 (Imagination Studio's threshold for an
 edit that returned the frame unchanged); the caller then renders without an anchor. `wan::Inputs::anchor` feeds the
-result to the first window as above. Not yet asked for by a job or the UI.
+result to the first window as above.
+
+In the app (2026-11-13): a switch under the Render step, off by default, which offers the 17 GB download the first
+time; the CLI takes `--anchor`. A job that asked for the anchor and could not make it renders without one and says
+why (`anchorSkipped`). A/B on the Tokyo Walk draft with Madame X (seed 0, conditioning loaded, one pose pass), each
+on a fresh ComfyUI:
+
+| Run | Anchor edit | Graph | Likeness (every 4th frame) |
+|---|---|---|---|
+| no anchor | | 116.1 s | 0.492 ± 0.024 |
+| anchor | 124 s (4 steps, no paging) | 220.3 s | 0.311 ± 0.011 |
+
+Here the anchor made it worse. Qwen re-framed the first frame closer but kept the clip's own woman, her leather coat,
+red dress and sunglasses, and Wan followed her for all 33 frames. The grey-level change inside the mask was 16.7,
+above `MIN_CHANGE`, because the framing moved, so the check took the edit for a swap. So the switch stays off by
+default and says it can fail; the bedroom A/B above is the case where it helps. The edit took 2 minutes, not 26:
+nothing else held RAM this time, where on 2026-10-30 free RAM was down to 77 MB and every step paged.
 
 ### Where the time goes, per node (2026-10-30)
 
@@ -211,6 +227,59 @@ Outside the 82.8 s of sampling, ~276 s are fixed costs. Three ways to cut the la
    the 8.4 GB of weights before the first step. A ComfyUI kept warm between renders (the app keeps it; the CLI
    starts a fresh one) skips that when RAM still holds the weights. This needs RAM to spare, which 32 GB at a 22 GB
    peak does not have, so the saving is up to −108 s on a bigger machine and less here.
+
+### Kept text-encoder output (2026-11-13)
+
+`kawarimi_comfy::conditioning`: a render saves each prompt's conditioning with ComfyUI's `SaveConditioning` into
+`output/kawarimi/conditioning`, named after a hash of the encoder and the text; a later render with the same pair
+loads it with `ConditioningLoader` and leaves umt5 out of the graph. Only for a ComfyUI started by Kawarimi, whose
+output folder it can look in. Same draft as above (Tokyo Walk, Madame X, seed 0), RTX 3070, 32 GB with other
+programs open, each run a fresh ComfyUI:
+
+| Run | Graph | KSampler | umt5 (nodes 4, 5, 6) | RAM peak |
+|---|---|---|---|---|
+| main, cold file cache | 457.7 | 271.1 | 84.8 | 23.1 GB |
+| this change, first render: encodes and saves | 376.0 | 226.5 | 69.0 | 23.5 GB |
+| this change, repeat render: loads | 160.9 | 83.6 | 0 | 24.1 GB |
+| main, run straight after, warm file cache | 305.2 | 162.1 | 70.9 | 25.5 GB |
+
+The repeat render's frames are identical to main's, bit for bit. Against main on an equally warm file cache it is
+144 s faster: 71 s of umt5, and 78 s less in KSampler, whose loading no longer competes with the 4.7 GB encoder for
+RAM. The runs vary by tens of seconds with what else the machine is doing, so the KSampler part is the less certain
+one. The saving needs the prompt text unchanged; the first render of a new text costs what it did.
+
+### One pose pass, over the rendered frames only (2026-11-13)
+
+ComfyUI's log showed the draft posing all 96 frames of the 6-second prep twice, face only and then body and hands,
+192 detections at ~0.17 s each in the Tokyo crowd, for 33 rendered frames. The graph now cuts the source and the mask
+video to the frames rendered (`ImageFromBatch`), and on a ComfyUI Kawarimi starts, one node, `KawarimiPose`
+(`data/kawarimi_pose.py`, written into ComfyUI's `custom_nodes`), runs DWPreprocessor's two passes with the
+detection of the second handed back from the first. On the person's own ComfyUI the graph keeps the two
+DWPreprocessor nodes. Same draft, conditioning loaded, fresh ComfyUI each:
+
+| Run | Graph | Pose (nodes 14, 15) | RAM peak |
+|---|---|---|---|
+| before | 160.9 | 43.3 (18.4 + 24.9) | 24.1 GB |
+| after | 116.1 | 13.4 | 22.7 GB |
+
+Frames identical to before, bit for bit. A final renders every frame, so there only the second detection goes:
+about 0.17 s a frame in a crowd, less with fewer people.
+
+### Wan kept loaded between renders: not worth it (2026-11-13)
+
+Two drafts in a row on one ComfyUI (seeds 0 and 1, conditioning loaded), with what the app sends to `/free` when
+its queue goes idle between them:
+
+| Between the renders | Second render: graph | KSampler |
+|---|---|---|
+| nothing freed | 139.2 | 76.8 |
+| models unloaded and the node cache wiped (the app today) | 140.6 | 82.1 |
+| models unloaded only | 140.6 | 76.3 |
+
+Without umt5 in the graph KSampler is its four steps, ~20 s each, whatever was freed: Wan comes back from the
+system's file cache in a few seconds. The 108 s of loading measured above came from umt5 crowding RAM and from a
+cold disk, which the kept conditioning and the file cache already take away. So the app still frees ComfyUI when
+its queue is idle, which hands the GPU and RAM back to prep and other programs.
 
 ## ComfyUI on the user's machine (issues #38, #41)
 

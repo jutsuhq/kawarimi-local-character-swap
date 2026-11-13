@@ -1,8 +1,19 @@
 import { useEffect, useState } from "react";
 import { CircleStop, Film, Sparkles } from "lucide-react";
-import { clipApi, type ClipView, type Estimate, type Quality, type RenderJob, type RenderProgress } from "../../lib/api";
+import {
+  api,
+  clipApi,
+  formatBytes,
+  type AssetInfo,
+  type AssetProgress,
+  type ClipView,
+  type Estimate,
+  type Quality,
+  type RenderJob,
+  type RenderProgress,
+} from "../../lib/api";
 import { Button, Progress } from "../../components/ui";
-import { Note, Segmented } from "./Step";
+import { Note, Segmented, Toggle } from "./Step";
 
 const STEP_TITLE: Record<RenderJob["step"], string> = {
   prep: "Preparing",
@@ -36,20 +47,24 @@ export function RenderStep({
   clip,
   person,
   quality,
+  anchor,
   onPerson,
   onQuality,
+  onAnchor,
 }: {
   clip: ClipView;
   person: number | null;
   quality: Quality;
+  anchor: boolean;
   onPerson: (p: number) => void;
   onQuality: (q: Quality) => void;
+  onAnchor: (on: boolean) => void;
 }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   useEffect(() => {
     if (!clip.manifest) return;
-    clipApi.estimate(clip.id, quality).then(setEstimate, () => setEstimate(null));
-  }, [clip.id, clip.prep, quality]);
+    clipApi.estimate(clip.id, quality, anchor).then(setEstimate, () => setEstimate(null));
+  }, [clip.id, clip.prep, quality, anchor]);
   const people = renderable(clip);
   const why = blocker(clip, person);
 
@@ -90,9 +105,72 @@ export function RenderStep({
         </div>
       )}
       {estimate?.ram?.message && <Note tone={estimate.ram.verdict === "short" ? "bad" : "warn"}>{estimate.ram.message}</Note>}
+      {/* Only for the ComfyUI Kawarimi runs, which is given the edit model's folder. */}
+      {estimate?.ram && <AnchorOption on={anchor} onChange={onAnchor} />}
       <Note tone={why ? "warn" : "faint"}>
         {why ?? "Runs on this GPU through ComfyUI; prep waits while it does. It shows in Jobs, the result here and in Library."}
       </Note>
+    </div>
+  );
+}
+
+/** The anchor first frame: Qwen-Image-Edit draws the character into the first frame before Wan starts, off unless
+ * asked for. Its model is a large download of its own, fetched here the first time. */
+function AnchorOption({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  const [asset, setAsset] = useState<AssetInfo | null>(null);
+  const [progress, setProgress] = useState<AssetProgress | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const load = () => api.assets().then((all) => setAsset(all.find((a) => a.id === "qwen-edit") ?? null));
+  useEffect(() => {
+    load();
+    const bytes = api.onAssetProgress((p) => p.id === "qwen-edit" && setProgress(p));
+    return () => {
+      bytes.then((f) => f());
+    };
+  }, []);
+  const installed = asset?.status === "installed";
+  // A toggle left on from before the model went away does not ask for a render it cannot do.
+  useEffect(() => {
+    if (asset && on && !installed) onChange(false);
+  }, [asset, on, installed]);
+  if (!asset) return null;
+
+  const download = async () => {
+    setFailure(null);
+    try {
+      await api.install(asset.id);
+    } catch (e) {
+      setFailure(String(e));
+    } finally {
+      setProgress(null);
+      load();
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-field border border-stroke bg-well p-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-body font-semibold">Anchor the first frame</div>
+          <Note>
+            Qwen-Image-Edit puts the character into the first frame before Wan starts, so the face and clothes can hold
+            closer to the picture. Experimental: on some clips the edit keeps the original person and the render
+            follows them. Adds a few minutes, far more when RAM runs short.
+          </Note>
+        </div>
+        {installed ? (
+          <Toggle on={on} onChange={onChange} label="Anchor the first frame" />
+        ) : (
+          <Button className="shrink-0" disabled={!!progress} onClick={download}>
+            Download {formatBytes(asset.size)}
+          </Button>
+        )}
+      </div>
+      {progress && <Progress value={progress.total ? progress.done / progress.total : 0} />}
+      {!installed && !progress && (
+        <Note tone="faint">Needs its own model, {formatBytes(asset.size)} on disk, downloaded once.</Note>
+      )}
+      {failure && <Note tone="bad">{failure}</Note>}
     </div>
   );
 }
@@ -137,26 +215,40 @@ export function RenderStatus({ clip, onOpenLibrary }: { clip: ClipView; onOpenLi
       </div>
     );
   }
+  const skipped = job.anchorSkipped && <Note tone="warn">Rendered without the anchor frame: {job.anchorSkipped}</Note>;
   if (job.end?.status === "failed") return <Note tone="bad">The {kind.toLowerCase()} failed: {job.end.reason}</Note>;
   if (job.end?.status === "done" && onOpenLibrary) {
     return (
-      <div className="flex items-center gap-2 rounded-field border border-stroke bg-well p-3">
-        <Note>
-          {kind} of Person {person} is ready, in the player and in Library.
-        </Note>
-        <Button className="ml-auto shrink-0" onClick={onOpenLibrary}>
-          <span className="flex items-center gap-2">
-            <Film size={14} /> Library
-          </span>
-        </Button>
-      </div>
+      <>
+        <div className="flex items-center gap-2 rounded-field border border-stroke bg-well p-3">
+          <Note>
+            {kind} of Person {person} is ready, in the player and in Library.
+          </Note>
+          <Button className="ml-auto shrink-0" onClick={onOpenLibrary}>
+            <span className="flex items-center gap-2">
+              <Film size={14} /> Library
+            </span>
+          </Button>
+        </div>
+        {skipped}
+      </>
     );
   }
-  return null;
+  return skipped || null;
 }
 
 /** Always in sight under the steps: what step 5 picked and Generate. */
-export function RenderBar({ clip, person, quality }: { clip: ClipView; person: number | null; quality: Quality }) {
+export function RenderBar({
+  clip,
+  person,
+  quality,
+  anchor,
+}: {
+  clip: ClipView;
+  person: number | null;
+  quality: Quality;
+  anchor: boolean;
+}) {
   const [failure, setFailure] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const why = blocker(clip, person);
@@ -165,7 +257,7 @@ export function RenderBar({ clip, person, quality }: { clip: ClipView; person: n
     setSending(true);
     setFailure(null);
     try {
-      await clipApi.render(clip.id, person, quality);
+      await clipApi.render(clip.id, person, quality, anchor);
     } catch (e) {
       setFailure(String(e));
     } finally {
@@ -175,7 +267,7 @@ export function RenderBar({ clip, person, quality }: { clip: ClipView; person: n
   return (
     <footer className="flex items-center gap-3 border-t border-stroke pt-4">
       <span className={`text-note ${failure ? "text-danger" : "text-muted"}`}>
-        {failure ?? why ?? `${quality === "draft" ? "Draft" : "Final"} of Person ${person} · Wan 2.2 Animate on this GPU · free`}
+        {failure ?? why ?? `${quality === "draft" ? "Draft" : "Final"} of Person ${person}${anchor ? ", anchored" : ""} · Wan 2.2 Animate on this GPU · free`}
       </span>
       <Button variant="primary" className="ml-auto shrink-0" disabled={!!why || sending} onClick={go}>
         <span className="flex items-center gap-2">

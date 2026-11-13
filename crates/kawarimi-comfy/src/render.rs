@@ -24,6 +24,10 @@ pub struct Settings {
     pub steps: Option<u32>,
     pub short_side: Option<u32>,
     pub window: Option<u32>,
+    /// Start from an anchor first frame: the character put into the clip's frame 0 by Qwen-Image-Edit
+    /// ([`crate::anchor`]).
+    #[serde(default)]
+    pub anchor: bool,
 }
 
 /// What a render needs from prep's `manifest.json`.
@@ -80,10 +84,14 @@ impl Settings {
             window: self.window.unwrap_or(preset.window),
             diffusion_model: model.file().into(),
             text_encoder: manifest::UMT5_Q4.files[0].path.into(),
+            output: None,
             prefix: prefix.into(),
         }
     }
 }
+
+/// The anchor's edit at ~1 MP on 8 GB with RAM to spare, 2 min measured; it took 26 when RAM ran out (docs/RENDER.md).
+const ANCHOR_SECONDS: f64 = 3.0 * 60.0;
 
 /// What a render will take, before it starts: its size, windows, time and memory.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -103,7 +111,8 @@ pub struct Estimate {
 
 impl Settings {
     /// Measured on an 8 GB card with 33-frame windows (docs/RENDER.md): 21 s per step, ~4 min of fixed costs, ~2 s
-    /// per frame of pose and decoding, peak 6.8 GB. Bigger cards hold Wan on the GPU; their rate is a guess.
+    /// per frame of pose and decoding, peak 6.8 GB, and 26 minutes for the anchor's edit. Bigger cards hold Wan on the
+    /// GPU; their rate is a guess.
     pub fn estimate(&self, clip: &Clip, vram: u64) -> Result<Estimate> {
         let model = self.variant(vram)?;
         let uploads = Uploads { source: String::new(), mask: String::new(), character: String::new() };
@@ -112,7 +121,8 @@ impl Settings {
         let per_step_frame = if vram >= wan::LARGE_CARD { 0.4 } else { 0.64 };
         let sampling: f64 = windows.iter().map(|&w| w as f64 * per_step_frame * inputs.steps as f64).sum();
         let pixels = (inputs.width * inputs.height) as f64 / (848.0 * 480.0);
-        let seconds = 240.0 + sampling * pixels + 2.0 * inputs.frames as f64 * pixels;
+        let anchor = if self.anchor { ANCHOR_SECONDS } else { 0.0 };
+        let seconds = 240.0 + sampling * pixels + 2.0 * inputs.frames as f64 * pixels + anchor;
         let card = vram as f32 / (1u64 << 30) as f32;
         let activations = 2.0 * inputs.window as f32 / wan::SHORT_WINDOW as f32 * pixels as f32;
         let weights = model.asset.download_size() as f32 / (1u64 << 30) as f32;
@@ -144,7 +154,7 @@ mod tests {
     fn the_preset_fills_what_is_left_out() {
         let clip = Clip { width: 1920, height: 1080, frames: 80 };
         let uploads = || Uploads { source: "s".into(), mask: "m".into(), character: "c".into() };
-        let draft = Settings { quality: Quality::Draft, seed: 3, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let draft = Settings { quality: Quality::Draft, seed: 3, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let model = draft.variant(8 << 30).unwrap();
         let inputs = draft.inputs(&clip, 8 << 30, model, uploads(), "kawarimi/j/render");
         assert_eq!((inputs.width, inputs.height, inputs.frames, inputs.window, inputs.seed), (848, 480, wan::SHORT_WINDOW, wan::SHORT_WINDOW, 3));
@@ -157,14 +167,16 @@ mod tests {
     #[test]
     fn estimates_the_measured_draft() {
         let clip = Clip { width: 960, height: 540, frames: 160 };
-        let draft = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let draft = Settings { quality: Quality::Draft, seed: 0, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let e = draft.estimate(&clip, 8 << 30).unwrap();
         assert_eq!((e.width, e.height, e.frames, e.windows.clone()), (848, 480, 33, vec![33]));
         // The measured run: 6:30 for the graph, 6.8 GB peak.
         assert!((360..420).contains(&e.seconds), "{e:?}");
         assert!((6.5..=6.8).contains(&e.vram_gb), "{e:?}");
-        let full = Settings { quality: Quality::Final, ..draft }.estimate(&clip, 8 << 30).unwrap();
+        let full = Settings { quality: Quality::Final, ..draft.clone() }.estimate(&clip, 8 << 30).unwrap();
         assert_eq!(full.windows, wan::windows(160, wan::SHORT_WINDOW));
         assert!(full.seconds > e.seconds);
+        let anchored = Settings { anchor: true, ..draft }.estimate(&clip, 8 << 30).unwrap();
+        assert_eq!(anchored.seconds, e.seconds + 3 * 60);
     }
 }

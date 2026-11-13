@@ -221,6 +221,8 @@ export type RenderJob = {
   end: { status: "done"; result: string } | { status: "failed"; reason: string } | { status: "cancelled" } | null;
   frames: number | null;
   detail: string;
+  /** Why the anchor first frame was asked for and not made; the render went on without it. */
+  anchorSkipped: string | null;
 };
 
 export type ClipView = {
@@ -278,8 +280,9 @@ export const clipApi = {
   changeCharacter: (id: string, person: number, change: CharacterChange) =>
     invoke<ClipView>("clip_change_character", { id, person, change }),
   template: (id: string, person: number) => invoke<string>("clip_template", { id, person }),
-  estimate: (id: string, quality: Quality) => invoke<Estimate>("clip_estimate", { id, quality }),
-  render: (id: string, person: number, quality: Quality) => invoke<ClipView>("clip_render", { id, person, quality }),
+  estimate: (id: string, quality: Quality, anchor: boolean) => invoke<Estimate>("clip_estimate", { id, quality, anchor }),
+  render: (id: string, person: number, quality: Quality, anchor: boolean) =>
+    invoke<ClipView>("clip_render", { id, person, quality, anchor }),
   cancelRender: (id: string) => invoke<void>("job_cancel", { id }),
   renderProgress: (job: string) => invoke<RenderProgress | null>("render_progress", { job }),
   onClip: (handler: (c: ClipView) => void): Promise<UnlistenFn> =>

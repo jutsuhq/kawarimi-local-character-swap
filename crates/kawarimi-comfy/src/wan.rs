@@ -5,8 +5,12 @@
 //! It holds the first window (nodes 101–105) and one extend window (201–206); [`make`] drops the extend for a short
 //! clip and repeats it, renumbered, for a long one.
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
+
+use crate::conditioning::Text;
 
 const TEMPLATE: &str = include_str!("../data/wan-animate.api.json");
 
@@ -14,6 +18,9 @@ const TEMPLATE: &str = include_str!("../data/wan-animate.api.json");
 pub const FPS: u32 = 16;
 /// Frames per window (`WanAnimateToVideo.length`, 4k + 1).
 pub const WINDOW: u32 = 77;
+/// The custom node that poses each frame once ([`make`] uses it on a ComfyUI Kawarimi started).
+pub const POSE_NODE: &str = include_str!("../data/kawarimi_pose.py");
+
 /// The window for cards under [`LARGE_CARD`]: on 8 GB it puts 2.7 GB of Wan on the GPU, where 77 frames leave none
 /// (docs/RENDER.md).
 pub const SHORT_WINDOW: u32 = 33;
@@ -45,6 +52,9 @@ pub struct Inputs {
     pub window: u32,
     pub diffusion_model: String,
     pub text_encoder: String,
+    /// ComfyUI's output folder, when it is on this machine: the prompts' conditionings are kept there and loaded
+    /// instead of encoded when they are ([`crate::conditioning`]).
+    pub output: Option<PathBuf>,
     /// Where in ComfyUI's output folder the video is saved (`SaveVideo.filename_prefix`), e.g. `kawarimi/<job>/render`.
     pub prefix: String,
 }
@@ -133,6 +143,26 @@ pub fn make(inputs: &Inputs) -> Result<Value> {
     set(&mut graph, "4", "clip_name", json!(inputs.text_encoder))?;
     let prompt = inputs.prompt.trim();
     set(&mut graph, "5", "text", json!(if prompt.is_empty() { DEFAULT_PROMPT } else { prompt }))?;
+    if let Some(output) = &inputs.output {
+        let mut encodes = false;
+        // The prompt (5) and the negative prompt (6), each saved by the node next to it or loaded in its place.
+        for (node, save) in [("5", "25"), ("6", "26")] {
+            let text = graph[node]["inputs"]["text"].as_str().context("the Wan Animate template has no prompt text")?;
+            match Text::plan(output, &inputs.text_encoder, text) {
+                Text::Load(file) => {
+                    graph.insert(node.into(), json!({ "class_type": "ConditioningLoader", "inputs": { "conditioning_name": file } }));
+                }
+                Text::Save(prefix) => {
+                    let inputs = json!({ "conditioning": [node, 0], "filename_prefix": prefix });
+                    graph.insert(save.into(), json!({ "class_type": "SaveConditioning", "inputs": inputs }));
+                    encodes = true;
+                }
+            }
+        }
+        if !encodes {
+            graph.remove("4");
+        }
+    }
     set(&mut graph, "9", "image", json!(inputs.character))?;
     set(&mut graph, "11", "file", json!(inputs.source))?;
     set(&mut graph, "16", "file", json!(inputs.mask))?;
@@ -143,6 +173,25 @@ pub fn make(inputs: &Inputs) -> Result<Value> {
     // What the template's Pixel Perfect Resolution works out for frames already at the render size.
     for node in ["14", "15"] {
         set(&mut graph, node, "resolution", json!(inputs.width.min(inputs.height)))?;
+    }
+    // Only the frames rendered go through pose and masking: a draft of a long clip used to pose all of it.
+    for (node, video) in [("27", "12"), ("28", "17")] {
+        graph.insert(node.into(), json!({ "class_type": "ImageFromBatch", "inputs": { "image": [video, 0], "batch_index": 0, "length": inputs.frames.max(1) } }));
+    }
+    set(&mut graph, "13", "image", json!(["27", 0]))?;
+    set(&mut graph, "18", "image", json!(["28", 0]))?;
+    if inputs.output.is_some() {
+        // A ComfyUI Kawarimi started has its pose node (`POSE_NODE`): one detection per frame for both pose videos.
+        let resolution = graph["14"]["inputs"]["resolution"].clone();
+        graph.insert("14".into(), json!({ "class_type": "KawarimiPose", "inputs": { "image": ["13", 0], "resolution": resolution } }));
+        graph.remove("15");
+        for node in graph.values_mut() {
+            for value in node["inputs"].as_object_mut().into_iter().flat_map(|i| i.values_mut()) {
+                if *value == json!(["15", 0]) {
+                    *value = json!(["14", 1]);
+                }
+            }
+        }
     }
 
     let extend: Vec<(u32, Value)> =
@@ -221,6 +270,7 @@ mod tests {
             window: WINDOW,
             diffusion_model: "wan.gguf".into(),
             text_encoder: "umt5.gguf".into(),
+            output: None,
             prefix: "kawarimi/job/render".into(),
         }
     }
@@ -300,6 +350,48 @@ mod tests {
         assert_eq!(graph["201"]["inputs"]["continue_motion"], json!(["106", 0]));
         assert_eq!(graph["206"]["inputs"]["image1"], json!(["106", 0]));
         assert!(make(&inputs(60)).unwrap().get("30").is_none());
+    }
+
+    #[test]
+    fn kept_prompts_are_loaded_instead_of_encoded() {
+        let output = tempfile::tempdir().unwrap();
+        let first = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(first["25"]["class_type"], "SaveConditioning");
+        assert_eq!(first["25"]["inputs"]["conditioning"], json!(["5", 0]));
+        assert_eq!(first["26"]["inputs"]["conditioning"], json!(["6", 0]));
+        assert_eq!(first["5"]["class_type"], "CLIPTextEncode");
+        // What SaveConditioning writes for the negative prompt.
+        let prefix = first["26"]["inputs"]["filename_prefix"].as_str().unwrap();
+        std::fs::create_dir_all(output.path().join(crate::conditioning::FOLDER)).unwrap();
+        std::fs::write(output.path().join(format!("{prefix}_00001_.safetensors")), b"").unwrap();
+        let second = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(second["6"]["class_type"], "ConditioningLoader");
+        assert!(second.get("26").is_none());
+        assert_eq!((second["5"]["class_type"].as_str(), second.get("25").is_some(), second.get("4").is_some()), (Some("CLIPTextEncode"), true, true));
+        let prefix = first["25"]["inputs"]["filename_prefix"].as_str().unwrap();
+        std::fs::write(output.path().join(format!("{prefix}_00001_.safetensors")), b"").unwrap();
+        let third = make(&Inputs { output: Some(output.path().into()), ..inputs(33) }).unwrap();
+        assert_eq!(third["5"]["class_type"], "ConditioningLoader");
+        assert!(third.get("4").is_none(), "nothing left to encode");
+        assert_eq!(third["101"]["inputs"]["positive"], json!(["5", 0]));
+        assert!(make(&inputs(33)).unwrap().get("25").is_none());
+    }
+
+    #[test]
+    fn only_the_rendered_frames_are_posed_once() {
+        let own = make(&inputs(150)).unwrap();
+        assert_eq!(own["27"]["inputs"], json!({ "image": ["12", 0], "batch_index": 0, "length": 150 }));
+        assert_eq!(own["13"]["inputs"]["image"], json!(["27", 0]));
+        assert_eq!(own["18"]["inputs"]["image"], json!(["28", 0]));
+        assert_eq!((own["14"]["class_type"].as_str(), own["15"]["class_type"].as_str()), (Some("DWPreprocessor"), Some("DWPreprocessor")));
+        let output = tempfile::tempdir().unwrap();
+        let ours = make(&Inputs { output: Some(output.path().into()), ..inputs(150) }).unwrap();
+        assert_eq!(ours["14"]["class_type"], "KawarimiPose");
+        assert!(ours.get("15").is_none());
+        for window in ["101", "201", "301"] {
+            assert_eq!(ours[window]["inputs"]["face_video"], json!(["14", 0]));
+            assert_eq!(ours[window]["inputs"]["pose_video"], json!(["14", 1]));
+        }
     }
 
     #[test]

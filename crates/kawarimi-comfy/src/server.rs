@@ -52,7 +52,9 @@ impl Extras {
         ];
         let wan = VARIANTS.iter().filter(|v| store.status(v.asset) == Status::Installed);
         folders.extend(wan.map(|v| ("diffusion_models", dir(v.asset))));
-        Self { folders, env: vec![("AUX_ANNOTATOR_CKPTS_PATH", dir(&manifest::DWPOSE))], args: vec![] }
+        let mut extras = Self { folders, env: vec![("AUX_ANNOTATOR_CKPTS_PATH", dir(&manifest::DWPOSE))], args: vec![] };
+        crate::anchor::extras(&mut extras, store);
+        extras
     }
 
     /// The render assets besides the Wan weights, which each render picks.
@@ -107,7 +109,13 @@ impl Server {
         anyhow::ensure!(install.is_installed(), "ComfyUI is not installed in {}", install.root.display());
         let port = free_port()?;
         let paths = install.root.join("extra_model_paths.yaml");
+        // Where the renders keep their prompts' conditionings, for `ConditioningLoader`.
+        let mut extras = extras.clone();
+        extras.folders.push(("embeddings", install.data().join("output").join(crate::conditioning::FOLDER)));
         std::fs::write(&paths, extras.yaml()?)?;
+        let nodes = install.data().join("custom_nodes");
+        std::fs::create_dir_all(&nodes)?;
+        std::fs::write(nodes.join("kawarimi_pose.py"), crate::wan::POSE_NODE)?;
         let log = install.root.join("logs").join("server.log");
         let out = std::fs::File::create(&log)?;
         let err = out.try_clone()?;

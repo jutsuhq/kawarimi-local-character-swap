@@ -88,6 +88,7 @@ mod tests {
             window: wan::WINDOW,
             diffusion_model: "ignored".into(),
             text_encoder: "umt5.gguf".into(),
+            output: None,
             prefix: "kawarimi/wan".into(),
         })
         .unwrap()

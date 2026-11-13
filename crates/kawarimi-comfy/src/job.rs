@@ -15,6 +15,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::anchor;
 use crate::client::{Client, Output, PromptState};
 use crate::ram::{self, Guard, Stats, Verdict};
 use crate::render::{self, Clip, Settings, Uploads};
@@ -99,6 +100,9 @@ pub struct Job {
     /// Each node's time, longest first; empty when ComfyUI's websocket was not reached.
     #[serde(default)]
     pub nodes: Vec<NodeTime>,
+    /// Why the render went on without the anchor first frame its settings asked for.
+    #[serde(default)]
+    pub anchor_skipped: Option<String>,
 }
 
 impl Job {
@@ -201,6 +205,7 @@ impl Jobs {
             detail: String::new(),
             ram: None,
             nodes: Vec::new(),
+            anchor_skipped: None,
         };
         self.save(&job)?;
         Ok(job)
@@ -252,6 +257,12 @@ pub trait Comfy {
     /// Videos in ComfyUI's output folder under `prefix`, whole or not, oldest first.
     fn saved(&self, prefix: &str) -> Vec<Output>;
     fn fetch(&self, output: &Output, dest: &Path) -> Result<()>;
+    /// Unloads ComfyUI's models and drops what it keeps between prompts.
+    fn free(&self) -> Result<()>;
+    /// ComfyUI's output folder, when it is on this machine.
+    fn output(&self) -> Option<&Path> {
+        None
+    }
     /// The RAM watchdog of a ComfyUI on this machine; none for one elsewhere.
     fn guard(&self) -> Option<&Guard> {
         None
@@ -276,6 +287,8 @@ pub trait Backend {
     fn finish(&self, video: &Path, prep: &Path, out: &Path, frames: u32) -> Result<()>;
     /// The frames in a video; fails on one that is not whole.
     fn frames(&self, video: &Path) -> Result<u32>;
+    /// A video's first frame at `width`×`height`.
+    fn first_frame(&self, video: &Path, width: u32, height: u32) -> Result<image::RgbImage>;
 }
 
 /// A ComfyUI over its HTTP API. With `output`, the server's output folder on this machine, read directly; without it
@@ -324,6 +337,14 @@ impl Comfy for Api {
             self.client.download(output, dest)?;
         }
         Ok(())
+    }
+
+    fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
+    }
+
+    fn free(&self) -> Result<()> {
+        self.client.free()
     }
 
     fn guard(&self) -> Option<&Guard> {
@@ -498,7 +519,8 @@ impl<B: Backend> Runner<'_, B> {
         (self.changed)(job);
         let dir = self.jobs.dir(&job.id);
         let prep = self.jobs.prep_dir(job);
-        let name = |what: &str| format!("kawarimi-{}-{what}", job.id);
+        let id = job.id.clone();
+        let name = |what: &str| format!("kawarimi-{id}-{what}");
         let (source, mask, character) = (name("source.mp4"), name("mask.mp4"), name("character.png"));
         let reference = dir.join("reference.png");
         let graph_file = dir.join("graph.json");
@@ -509,9 +531,21 @@ impl<B: Backend> Runner<'_, B> {
                 let vram = comfy.vram()?;
                 let model = job.spec.settings.variant(vram)?;
                 let uploads = Uploads { source: source.clone(), mask: mask.clone(), character: character.clone() };
-                let inputs = job.spec.settings.inputs(&clip, vram, model, uploads, &job.prefix());
+                let inputs = wan::Inputs {
+                    output: comfy.output().map(Path::to_path_buf),
+                    ..job.spec.settings.inputs(&clip, vram, model, uploads, &job.prefix())
+                };
                 let image = image::open(&job.spec.character).with_context(|| format!("reading {}", job.spec.character.display()))?;
                 atomically(&reference, |part| Ok(wan::reference(&image, inputs.width, inputs.height).save(part)?))?;
+                let inputs = if job.spec.settings.anchor {
+                    let anchor = self.anchor(job, comfy, &prep, &reference, &inputs)?;
+                    if self.cancelled() {
+                        return Ok(());
+                    }
+                    wan::Inputs { anchor: anchor.map(|_| name("anchor.png")), ..inputs }
+                } else {
+                    inputs
+                };
                 let graph = render::graph(&inputs, model)?;
                 job.frames = Some(inputs.frames);
                 self.save(job)?;
@@ -520,8 +554,13 @@ impl<B: Backend> Runner<'_, B> {
             }
         };
         self.check_ram(job, comfy)?;
-        for (file, name) in [(prep.join("normalized.mp4"), &source), (prep.join("mask.mp4"), &mask), (reference, &character)] {
-            let stored = comfy.upload(&file, name)?;
+        let mut files = vec![(prep.join("normalized.mp4"), source), (prep.join("mask.mp4"), mask), (reference, character)];
+        let anchor = dir.join("anchor.png");
+        if graph.to_string().contains(&name("anchor.png")) {
+            files.push((anchor, name("anchor.png")));
+        }
+        for (file, name) in &files {
+            let stored = comfy.upload(file, name)?;
             anyhow::ensure!(&stored == name, "ComfyUI stored {} as {stored}", file.display());
         }
         if job.submissions >= MAX_SUBMISSIONS {
@@ -535,6 +574,31 @@ impl<B: Backend> Runner<'_, B> {
         }
         job.prompt = Some(comfy.queue(&graph)?);
         self.to(job, Step::Queued)
+    }
+
+    /// The anchor first frame in the job's folder (`anchor.png`), made once. `None` when the edit failed or left the
+    /// person as it was, and the render goes on without it; the job keeps why.
+    fn anchor(&self, job: &mut Job, comfy: &B::Comfy, prep: &Path, reference: &Path, inputs: &wan::Inputs) -> Result<Option<PathBuf>> {
+        let file = self.jobs.dir(&job.id).join("anchor.png");
+        if file.is_file() {
+            return Ok(Some(file));
+        }
+        job.detail = "putting the character into the first frame (Qwen-Image-Edit)".into();
+        (self.changed)(job);
+        let frame = self.backend.first_frame(&prep.join("normalized.mp4"), inputs.width, inputs.height)?;
+        let mask = image::DynamicImage::ImageRgb8(self.backend.first_frame(&prep.join("mask.mp4"), inputs.width, inputs.height)?).to_luma8();
+        let made = anchor::make(comfy, &frame, &mask, reference, &file, inputs, &|| self.cancelled());
+        match made {
+            Ok(()) => Ok(Some(file)),
+            Err(_) if self.cancelled() => Ok(None),
+            // ComfyUI gone: the render loop starts it again and asks anew.
+            Err(e) if comfy.vram().is_err() => Err(e),
+            Err(e) => {
+                job.anchor_skipped = Some(format!("{e:#}"));
+                self.save(job)?;
+                Ok(None)
+            }
+        }
     }
 
     /// Refuses a render that RAM and page file together cannot hold; says so when it will page.
@@ -859,6 +923,10 @@ mod tests {
             std::fs::copy(world.output.join(&output.subfolder).join(&output.filename), dest)?;
             Ok(())
         }
+
+        fn free(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
     impl Backend for Fake {
@@ -900,6 +968,10 @@ mod tests {
             self.0.borrow_mut().tick();
             read_frames(video)
         }
+
+        fn first_frame(&self, _: &Path, _: u32, _: u32) -> Result<image::RgbImage> {
+            anyhow::bail!("the fake ComfyUI makes no anchor")
+        }
     }
 
     fn write_prep(out: &Path) {
@@ -933,7 +1005,7 @@ mod tests {
             write_prep(&folder);
             Source::Prepared { folder }
         };
-        let settings = Settings { quality: Quality::Draft, seed: 7, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None };
+        let settings = Settings { quality: Quality::Draft, seed: 7, prompt: String::new(), model: None, frames: None, steps: None, short_side: None, window: None, anchor: false };
         let job = jobs.create(Spec { source, character, settings }).unwrap();
         Setup { _tmp: tmp, jobs, fake, job }
     }

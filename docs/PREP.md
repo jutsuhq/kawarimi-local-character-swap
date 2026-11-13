@@ -137,6 +137,23 @@ CPU time is the conversion to RGB and the copy back from the GPU, not the decodi
 decodes on the GPU when NVENC is there (it is the same driver), and the real saving would be the colour conversion on
 the GPU too (`scale_cuda` and a YUV→RGB glue graph).
 
+### RT-DETRv2 on the GPU (issue #25, 2026-11-13)
+
+RT-DETRv2 already runs with the CUDA execution provider (`pipeline.rs` loads it with `Device::Cuda`, which fails rather
+than falls back). Left on the CPU are the 640² resize and the planar float copy in `people.rs` and the parsing of its
+300 queries. On the Tokyo Walk prep (960×540, every 8th of 96 frames, 12 detections), RTX 3070, Windows:
+
+| | Per detect | Session load |
+|---|---|---|
+| CPU execution provider | 185.8 ms | 0.96 s |
+| CUDA execution provider | 73.3 ms | 4.16 s |
+| of that, the CPU preprocessing | 20.2 ms | |
+
+ONNX Runtime's profile of the CUDA session puts every compute node on CUDA; 132 shape nodes (`Gather`, `Concat`,
+`Unsqueeze`, `Where`) run on the CPU for 2.1 ms a run. The detections match the CPU's: the same boxes, scores within
+0.001, near-equal scores in a different order. A glue graph for the preprocessing would save at most the 20 ms of
+each of the 12 detections, 0.24 s of a 6-second clip's 48 s of people and tracking, so it is left as it is.
+
 ### Shot model check (issue #24)
 
 `scripts/parity/transnetv2.py` runs our ONNX (`edgetools/transnetv2`) and the original TensorFlow model

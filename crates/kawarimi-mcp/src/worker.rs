@@ -177,4 +177,8 @@ impl job::Backend for Backend {
         let probe = ffmpeg(&self.store)?.probe(video)?;
         Ok((probe.duration * probe.fps).round() as u32)
     }
+
+    fn first_frame(&self, video: &Path, width: u32, height: u32) -> Result<image::RgbImage> {
+        kawarimi_comfy::anchor::first_frame(&ffmpeg(&self.store)?, video, width, height)
+    }
 }
