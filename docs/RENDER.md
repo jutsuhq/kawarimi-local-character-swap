@@ -249,6 +249,22 @@ DWPreprocessor nodes. Same draft, conditioning loaded, fresh ComfyUI each:
 Frames identical to before, bit for bit. A final renders every frame, so there only the second detection goes:
 about 0.17 s a frame in a crowd, less with fewer people.
 
+### Wan kept loaded between renders: not worth it (2026-11-13)
+
+Two drafts in a row on one ComfyUI (seeds 0 and 1, conditioning loaded), with what the app sends to `/free` when
+its queue goes idle between them:
+
+| Between the renders | Second render: graph | KSampler |
+|---|---|---|
+| nothing freed | 139.2 | 76.8 |
+| models unloaded and the node cache wiped (the app today) | 140.6 | 82.1 |
+| models unloaded only | 140.6 | 76.3 |
+
+Without umt5 in the graph KSampler is its four steps, ~20 s each, whatever was freed: Wan comes back from the
+system's file cache in a few seconds. The 108 s of loading measured above came from umt5 crowding RAM and from a
+cold disk, which the kept conditioning and the file cache already take away. So the app still frees ComfyUI when
+its queue is idle, which hands the GPU and RAM back to prep and other programs.
+
 ## ComfyUI on the user's machine (issues #38, #41)
 
 `kawarimi-comfy` installs ComfyUI into a folder the app owns and runs it as a child process.
