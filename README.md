@@ -10,6 +10,10 @@ VRAM recommended. Guide, examples and FAQ: [jutsustudio.com/kawarimi](https://ju
 
 [![Download](https://img.shields.io/github/v/release/jutsuhq/kawarimi-local-character-swap?include_prereleases&style=for-the-badge&label=Download&labelColor=F2FF59&color=211927)](https://github.com/jutsuhq/kawarimi-local-character-swap/releases)
 
+[![GitHub stars](https://img.shields.io/github/stars/jutsuhq/kawarimi-local-character-swap?style=social)](https://github.com/jutsuhq/kawarimi-local-character-swap/stargazers)
+
+⭐ Kawarimi is free and made by a small team. A star is how other people find it; **Watch › Custom › Releases** emails you each new version.
+
 [Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Agents](#agents) ·
 [Requirements](#requirements) · [Build](#build-from-source) · [Website](https://jutsustudio.com/kawarimi/)
 
