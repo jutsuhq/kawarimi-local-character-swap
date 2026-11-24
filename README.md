@@ -35,7 +35,7 @@ VRAM recommended. Guide, examples and FAQ: [jutsustudio.com/kawarimi](https://ju
 | Input and output | A 4–30 s clip and one image per person. A 480p draft first, then the whole clip at 16 fps with the original sound |
 | Measured speed | RTX 3070 8 GB, 32 GB RAM: a 33-frame 480p draft in 116 s with a repeated prompt ([RENDER.md](docs/RENDER.md)). Larger cards are not measured yet |
 | Install | Windows: run `Kawarimi_<version>_x64-setup.exe`. Ubuntu, Debian: `sudo apt install ./Kawarimi_<version>_amd64.deb` |
-| Download | [Releases](https://github.com/jutsuhq/kawarimi-local-character-swap/releases) (latest: 0.2.0) |
+| Download | [Releases](https://github.com/jutsuhq/kawarimi-local-character-swap/releases) (latest: 0.2.1) |
 | Website | [jutsustudio.com/kawarimi](https://jutsustudio.com/kawarimi/) |
 
 ## Compared with
