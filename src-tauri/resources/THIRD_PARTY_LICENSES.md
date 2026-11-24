@@ -7,7 +7,7 @@ first only when you ask, each pinned to an exact revision and checked against it
 
 | Asset | License | Source |
 |---|---|---|
-| FFmpeg 9.0 (LGPL) | LGPL-2.1-or-later | https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-18-13-01 |
+| FFmpeg 9.0 (LGPL) | LGPL-2.1-or-later | https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-31-12-59 |
 | CUDA 13 and cuDNN 9 runtime | NVIDIA redistributable | https://pypi.org/project/nvidia-cudnn-cu13/ |
 | uv 0.12.22 (Python installer) | MIT OR Apache-2.0 | https://github.com/astral-sh/uv/releases/tag/0.12.22 |
 | ComfyUI v0.39.0 | GPL-3.0 | https://github.com/comfyanonymous/ComfyUI/tree/b0b743566f65daafc423b4fea8a2fbda94b3384a |
